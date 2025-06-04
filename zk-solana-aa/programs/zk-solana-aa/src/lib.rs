@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 use sp1_solana::verify_proof;
 
 mod constants;
+// mod contract;
 
 declare_id!("DMztWS673fGnGLPReJa5pVNaMqG5VxRjjFcnNXaDzX54");
 

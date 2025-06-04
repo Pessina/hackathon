@@ -16,11 +16,10 @@ no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build"]
 
-
 [dependencies]
 # sp1-solana requires anchor-lang 0.30.1
 anchor-lang = "0.31.0"
 borsh = "1.5.1"
-# Tagged as non production ready
 sp1-solana = { git = "https://github.com/succinctlabs/sp1-solana" }
+anchor-spl = "0.31.0"
 

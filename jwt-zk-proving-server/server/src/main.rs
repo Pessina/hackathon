@@ -26,6 +26,7 @@ struct ProofRequest {
 struct ProofResponse {
     proof: String,
     verification_key: String,
+    public_outputs_bytes: String,
     public_outputs: PublicOutputs,
     proof_size: usize,
 }
@@ -116,7 +117,7 @@ async fn generate_proof(
 
     let (pk, vk) = state.prover_client.setup(RSA_ELF);
 
-    let proof = state
+    let mut proof = state
         .prover_client
         .prove(&pk, &stdin)
         .groth16()
@@ -144,9 +145,13 @@ async fn generate_proof(
     let email_hash = public_values.read::<Vec<u8>>();
     let nonce = public_values.read::<String>();
 
+    // Remove the tee_proof from the proof as it's not compatible with the zk-solana-aa program
+    proof.tee_proof = None;
+
     let response = ProofResponse {
         proof: hex::encode(proof.bytes()),
         verification_key: vk.bytes32(),
+        public_outputs_bytes: hex::encode(proof.public_values.to_vec()),
         public_outputs: PublicOutputs {
             public_key_hash: hex::encode(pk_hash),
             email_hash: hex::encode(email_hash),
