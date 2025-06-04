@@ -14,7 +14,7 @@ declare_id!("DMztWS673fGnGLPReJa5pVNaMqG5VxRjjFcnNXaDzX54");
 /// let (pk, vk) = client.setup(YOUR_ELF_HERE);
 /// let vkey_hash = vk.bytes32();
 /// ```
-const JWT_VKEY_HASH: &str = "0x00d40d53d41c2d2ca42d175dba4673c046a4949d17ac7a81f491cb0bd7e6fd85";
+const JWT_VKEY_HASH: &str = "0x0013e8040c80853aecef5db1fdccab96b48c36c2f0059229fbca537361bd840f";
 
 /// The instruction data for the program.
 #[derive(AnchorSerialize, AnchorDeserialize)]
@@ -50,16 +50,10 @@ pub mod zk_solana_aa {
 
         // Extract the public outputs like in main.rs
         let mut reader = groth16_proof.sp1_public_inputs.as_slice();
-        let pk_hash = Vec::<u8>::deserialize(&mut reader)
-            .map_err(|_| error!(ErrorCode::InvalidPublicInputs))?;
-        let email_hash = Vec::<u8>::deserialize(&mut reader)
-            .map_err(|_| error!(ErrorCode::InvalidPublicInputs))?;
-        let nonce =
-            String::deserialize(&mut reader).map_err(|_| error!(ErrorCode::InvalidPublicInputs))?;
+        let verified =
+            bool::deserialize(&mut reader).map_err(|_| error!(ErrorCode::InvalidPublicInputs))?;
 
-        msg!("Public key hash: {:?}", pk_hash);
-        msg!("Email hash: {:?}", email_hash);
-        msg!("Nonce: {}", nonce);
+        msg!("Verified: {:?}", verified);
 
         Ok(())
     }

@@ -27,15 +27,7 @@ struct ProofResponse {
     proof: String,
     verification_key: String,
     public_outputs_bytes: String,
-    public_outputs: PublicOutputs,
     proof_size: usize,
-}
-
-#[derive(Debug, Serialize)]
-struct PublicOutputs {
-    public_key_hash: String,
-    email_hash: String,
-    nonce: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -125,8 +117,8 @@ async fn generate_proof(
     })?;
 
     stdin.write(&der_bytes.to_vec());
-    stdin.write(&jwt_header.to_string());
-    stdin.write(&jwt_payload.to_string());
+    let message = format!("{}.{}", jwt_header, jwt_payload);
+    stdin.write(&message.as_bytes().to_vec());
     stdin.write(&jwt_signature);
 
     tracing::info!("Starting proof generation...");
@@ -156,11 +148,6 @@ async fn generate_proof(
         )
     })?;
 
-    let mut public_values = proof.public_values.clone();
-    let pk_hash = public_values.read::<Vec<u8>>();
-    let email_hash = public_values.read::<Vec<u8>>();
-    let nonce = public_values.read::<String>();
-
     // Remove the tee_proof from the proof as it's not compatible with the zk-solana-aa program
     proof.tee_proof = None;
 
@@ -168,11 +155,6 @@ async fn generate_proof(
         proof: hex::encode(proof.bytes()),
         verification_key: vk.bytes32(),
         public_outputs_bytes: hex::encode(proof.public_values.to_vec()),
-        public_outputs: PublicOutputs {
-            public_key_hash: hex::encode(pk_hash),
-            email_hash: hex::encode(email_hash),
-            nonce,
-        },
         proof_size: proof.bytes().len(),
     };
 
