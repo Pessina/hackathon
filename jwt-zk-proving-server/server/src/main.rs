@@ -90,7 +90,8 @@ async fn generate_proof(
             )
         })?;
 
-    if request.jwt_token.split('.').count() != 3 {
+    let jwt_parts: Vec<&str> = request.jwt_token.split('.').collect();
+    if jwt_parts.len() != 3 {
         return Err((
             StatusCode::BAD_REQUEST,
             ResponseJson(ErrorResponse {
@@ -98,6 +99,19 @@ async fn generate_proof(
             }),
         ));
     }
+
+    let jwt_header = jwt_parts[0];
+    let jwt_payload = jwt_parts[1];
+    let jwt_signature = general_purpose::URL_SAFE_NO_PAD
+        .decode(jwt_parts[2])
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                ResponseJson(ErrorResponse {
+                    error: "Invalid JWT signature encoding".to_string(),
+                }),
+            )
+        })?;
 
     let mut stdin = SP1Stdin::new();
 
@@ -111,7 +125,9 @@ async fn generate_proof(
     })?;
 
     stdin.write(&der_bytes.to_vec());
-    stdin.write(&request.jwt_token);
+    stdin.write(&jwt_header.to_string());
+    stdin.write(&jwt_payload.to_string());
+    stdin.write(&jwt_signature);
 
     tracing::info!("Starting proof generation...");
 

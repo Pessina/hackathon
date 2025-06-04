@@ -14,7 +14,7 @@ declare_id!("DMztWS673fGnGLPReJa5pVNaMqG5VxRjjFcnNXaDzX54");
 /// let (pk, vk) = client.setup(YOUR_ELF_HERE);
 /// let vkey_hash = vk.bytes32();
 /// ```
-const JWT_VKEY_HASH: &str = "0x0050b304332480357605f91b1859f2c0fe5b4dd171300f2ef38d1b32bf831088";
+const JWT_VKEY_HASH: &str = "0x00d40d53d41c2d2ca42d175dba4673c046a4949d17ac7a81f491cb0bd7e6fd85";
 
 /// The instruction data for the program.
 #[derive(AnchorSerialize, AnchorDeserialize)]
@@ -36,8 +36,6 @@ pub mod zk_solana_aa {
         _ctx: Context<VerifyProof>,
         groth16_proof: SP1Groth16Proof,
     ) -> Result<()> {
-        msg!("JWT_VKEY_HASH: {:?}", JWT_VKEY_HASH);
-
         // Get the SP1 Groth16 verification key from the `sp1-solana` crate.
         let vk = constants::GROTH16_VK_5_0_0_BYTES;
 
