@@ -117,8 +117,8 @@ async fn generate_proof(
     })?;
 
     stdin.write(&der_bytes.to_vec());
-    let message = format!("{}.{}", jwt_header, jwt_payload);
-    stdin.write(&message.as_bytes().to_vec());
+    stdin.write(&jwt_header.as_bytes().to_vec());
+    stdin.write(&jwt_payload.as_bytes().to_vec());
     stdin.write(&jwt_signature);
 
     tracing::info!("Starting proof generation...");

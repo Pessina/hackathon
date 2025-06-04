@@ -21,5 +21,8 @@ idl-build = ["anchor-lang/idl-build"]
 anchor-lang = "0.31.0"
 borsh = "1.5.1"
 sp1-solana = { git = "https://github.com/succinctlabs/sp1-solana" }
+sp1-primitives = "5.0.0"
 anchor-spl = "0.31.0"
+p3-baby-bear = "0.2.3-succinct"
+serde = { version = "1.0.219", features = ["derive"] }
 
