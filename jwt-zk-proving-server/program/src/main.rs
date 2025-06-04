@@ -1,6 +1,7 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
+use base64::Engine;
 use p3_baby_bear::BabyBear;
 use p3_field::AbstractField;
 use rsa::{pkcs8::DecodePublicKey, Pkcs1v15Sign, RsaPublicKey};
@@ -10,11 +11,12 @@ use sp1_primitives::poseidon2_hash;
 
 type PoseidonHash = [BabyBear; 8];
 
+// The order matters, it should be the same as the verifier program
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PublicOutputs {
-    pub email: String,
-    pub nonce: String,
+    pub email_hash: PoseidonHash,
     pub pk_hash: PoseidonHash,
+    pub nonce: String,
     pub verified: bool,
 }
 
@@ -37,18 +39,19 @@ pub fn main() {
 
     let public_outputs = match verification {
         Ok(_) => {
-            let (email, nonce) = extract_jwt_claims_from_payload(&jwt_payload);
+            let (email, nonce) = extract_jwt_claims_from_payload(&jwt_payload).unwrap();
             let pk_hash = hash_with_poseidon(&pk_der);
+            let email_hash = hash_with_poseidon(email.as_bytes());
 
             PublicOutputs {
-                email,
+                email_hash,
                 nonce,
-                pk_hash: pk_hash,
+                pk_hash,
                 verified: true,
             }
         }
         Err(_) => PublicOutputs {
-            email: String::new(),
+            email_hash: [BabyBear::zero(); 8],
             nonce: String::new(),
             pk_hash: [BabyBear::zero(); 8],
             verified: false,
@@ -56,18 +59,6 @@ pub fn main() {
     };
 
     sp1_zkvm::io::commit(&public_outputs);
-}
-
-fn extract_jwt_claims_from_payload(jwt_payload: &[u8]) -> (String, String) {
-    if let Ok(payload_bytes) = base64_url_decode(core::str::from_utf8(jwt_payload).unwrap_or("")) {
-        if let Ok(payload_str) = core::str::from_utf8(&payload_bytes) {
-            let email = extract_json_string_field(payload_str, "email");
-            let nonce = extract_json_string_field(payload_str, "nonce");
-            return (email, nonce);
-        }
-    }
-
-    (String::new(), String::new())
 }
 
 fn hash_with_poseidon(data: &[u8]) -> PoseidonHash {
@@ -80,53 +71,16 @@ fn hash_with_poseidon(data: &[u8]) -> PoseidonHash {
     poseidon2_hash(input)
 }
 
-fn base64_url_decode(input: &str) -> Result<Vec<u8>, &'static str> {
-    let mut result = Vec::new();
-    let chars = input.chars().filter(|&c| c != '=');
-    let mut buffer = 0u32;
-    let mut bits = 0;
+fn extract_jwt_claims_from_payload(jwt_payload: &[u8]) -> Option<(String, String)> {
+    let payload_str = core::str::from_utf8(jwt_payload).ok()?;
+    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_str)
+        .ok()?;
+    let decoded_str = core::str::from_utf8(&payload_bytes).ok()?;
+    let json: serde_json::Value = serde_json::from_str(decoded_str).ok()?;
 
-    for c in chars {
-        let value = match c {
-            'A'..='Z' => (c as u8 - b'A') as u32,
-            'a'..='z' => (c as u8 - b'a' + 26) as u32,
-            '0'..='9' => (c as u8 - b'0' + 52) as u32,
-            '-' => 62,
-            '_' => 63,
-            _ => return Err("Invalid character"),
-        };
+    let email = json["email"].as_str().unwrap_or("").to_string();
+    let nonce = json["nonce"].as_str().unwrap_or("").to_string();
 
-        buffer = (buffer << 6) | value;
-        bits += 6;
-
-        if bits >= 8 {
-            result.push((buffer >> (bits - 8)) as u8);
-            bits -= 8;
-        }
-    }
-
-    Ok(result)
-}
-
-fn extract_json_string_field(json: &str, field_name: &str) -> String {
-    let field_pattern = format!("\"{}\"", field_name);
-
-    if let Some(field_pos) = json.find(&field_pattern) {
-        let search_start = field_pos + field_pattern.len();
-
-        if let Some(colon_pos) = json[search_start..].find(':') {
-            let value_start = search_start + colon_pos + 1;
-
-            let trimmed = json[value_start..].trim_start();
-            if trimmed.starts_with('"') {
-                let quote_start = value_start + (json[value_start..].len() - trimmed.len()) + 1;
-
-                if let Some(quote_end) = json[quote_start..].find('"') {
-                    return json[quote_start..quote_start + quote_end].to_string();
-                }
-            }
-        }
-    }
-
-    String::new()
+    Some((email, nonce))
 }
