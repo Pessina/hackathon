@@ -2,20 +2,18 @@
 sp1_zkvm::entrypoint!(main);
 
 use base64::Engine;
-use p3_baby_bear::BabyBear;
-use p3_field::AbstractField;
 use rsa::{pkcs8::DecodePublicKey, Pkcs1v15Sign, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sp1_primitives::poseidon2_hash;
 
-type PoseidonHash = [BabyBear; 8];
+// Consider using poseidon hash for performance in zk circuits
+type Sha256Hash = [u8; 32];
 
 // The order matters, it should be the same as the verifier program
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PublicOutputs {
-    pub email_hash: PoseidonHash,
-    pub pk_hash: PoseidonHash,
+    pub email_hash: Sha256Hash,
+    pub pk_hash: Sha256Hash,
     pub nonce: String,
     pub verified: bool,
 }
@@ -40,8 +38,8 @@ pub fn main() {
     let public_outputs = match verification {
         Ok(_) => {
             let (email, nonce) = extract_jwt_claims_from_payload(&jwt_payload).unwrap();
-            let pk_hash = hash_with_poseidon(&pk_der);
-            let email_hash = hash_with_poseidon(email.as_bytes());
+            let pk_hash = hash_with_sha256(&pk_der);
+            let email_hash = hash_with_sha256(email.as_bytes());
 
             PublicOutputs {
                 email_hash,
@@ -51,9 +49,9 @@ pub fn main() {
             }
         }
         Err(_) => PublicOutputs {
-            email_hash: [BabyBear::zero(); 8],
+            email_hash: [0u8; 32],
             nonce: String::new(),
-            pk_hash: [BabyBear::zero(); 8],
+            pk_hash: [0u8; 32],
             verified: false,
         },
     };
@@ -61,14 +59,10 @@ pub fn main() {
     sp1_zkvm::io::commit(&public_outputs);
 }
 
-fn hash_with_poseidon(data: &[u8]) -> PoseidonHash {
-    let mut input = Vec::new();
-
-    for byte in data {
-        input.push(BabyBear::from_canonical_u8(*byte));
-    }
-
-    poseidon2_hash(input)
+fn hash_with_sha256(data: &[u8]) -> Sha256Hash {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher.finalize().into()
 }
 
 fn extract_jwt_claims_from_payload(jwt_payload: &[u8]) -> Option<(String, String)> {

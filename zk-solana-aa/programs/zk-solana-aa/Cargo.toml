@@ -14,7 +14,7 @@ cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
-idl-build = ["anchor-lang/idl-build"]
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 
 [dependencies]
 # sp1-solana requires anchor-lang 0.30.1
@@ -23,6 +23,6 @@ borsh = "1.5.1"
 sp1-solana = { git = "https://github.com/succinctlabs/sp1-solana" }
 sp1-primitives = "5.0.0"
 anchor-spl = "0.31.0"
-p3-baby-bear = "0.2.3-succinct"
+sha2 = "0.10.8"
 serde = { version = "1.0.219", features = ["derive"] }
 

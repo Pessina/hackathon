@@ -3303,8 +3303,8 @@ dependencies = [
  "anchor-lang",
  "anchor-spl",
  "borsh 1.5.7",
- "p3-baby-bear",
  "serde",
+ "sha2 0.10.9",
  "sp1-primitives",
  "sp1-solana",
 ]

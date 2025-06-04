@@ -1,95 +1,161 @@
-// use anchor_lang::prelude::*;
-// use anchor_spl::token::{transfer, Token, TokenAccount, Transfer};
+use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
-// /// Account structure for creating a PDA wallet
-// #[derive(Accounts)]
-// #[instruction(seed: String)]
-// pub struct CreatePDAWallet<'info> {
-//     #[account(mut)]
-//     pub payer: Signer<'info>,
+use crate::contract::auth::{verify_jwt_proof, SP1Groth16Proof};
 
-//     /// The PDA wallet account
-//     #[account(
-//         init,
-//         payer = payer,
-//         space = 8 + 32 + 4 + seed.len(), // discriminator + owner + string length + seed
-//         seeds = [seed.as_bytes()],
-//         bump
-//     )]
-//     pub pda_wallet: Account<'info, PDAWallet>,
+#[derive(Accounts)]
+#[instruction(email_hash: [u8; 32])]
+pub struct CreateUserAccountWithAuth<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
 
-//     pub system_program: Program<'info, System>,
-// }
+    #[account(
+        init,
+        payer = payer,
+        space = UserAccount::SPACE,
+        seeds = [UserAccount::SEED_PREFIX, &email_hash],
+        bump
+    )]
+    pub user_account: Account<'info, UserAccount>,
 
-// /// Account structure for staking transactions from PDA
-// #[derive(Accounts)]
-// #[instruction(seed: String)]
-// pub struct StakeFromPDA<'info> {
-//     /// The PDA wallet that will sign the transaction
-//     #[account(
-//         mut,
-//         seeds = [seed.as_bytes()],
-//         bump = pda_wallet.bump,
-//         has_one = owner
-//     )]
-//     pub pda_wallet: Account<'info, PDAWallet>,
+    pub system_program: Program<'info, System>,
+}
 
-//     /// The owner who can authorize transactions from this PDA
-//     pub owner: Signer<'info>,
+#[derive(Accounts)]
+#[instruction(email_hash: [u8; 32])]
+pub struct TransferFromUserAccountWithAuth<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
 
-//     /// Source token account (owned by PDA)
-//     #[account(
-//         mut,
-//         associated_token::mint = mint,
-//         associated_token::authority = pda_wallet
-//     )]
-//     pub source_token_account: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        seeds = [UserAccount::SEED_PREFIX, &email_hash],
+        bump = user_account.bump,
+        constraint = user_account.email_hash == email_hash @ ErrorCode::EmailHashMismatch
+    )]
+    pub user_account: Account<'info, UserAccount>,
 
-//     /// Destination staking account
-//     #[account(mut)]
-//     pub destination_account: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        token::authority = user_account,
+        token::mint = mint,
+    )]
+    pub source_token_account: Account<'info, TokenAccount>,
 
-//     /// Token mint
-//     pub mint: Account<'info, anchor_spl::token::Mint>,
+    #[account(
+        mut,
+        token::mint = mint,
+    )]
+    pub destination_token_account: Account<'info, TokenAccount>,
 
-//     /// Token program
-//     pub token_program: Program<'info, Token>,
-// }
+    pub mint: Account<'info, Mint>,
+    pub token_program: Program<'info, Token>,
+}
 
-// /// Account structure for funding the PDA wallet
-// #[derive(Accounts)]
-// #[instruction(seed: String)]
-// pub struct FundPDAWallet<'info> {
-//     #[account(mut)]
-//     pub funder: Signer<'info>,
+pub fn create_user_account_with_auth(
+    ctx: Context<CreateUserAccountWithAuth>,
+    email_hash: [u8; 32],
+    groth16_proof: SP1Groth16Proof,
+) -> Result<()> {
+    let public_outputs = verify_jwt_proof(groth16_proof)?;
+    let verified_email_hash = public_outputs.email_hash;
 
-//     #[account(
-//         mut,
-//         seeds = [seed.as_bytes()],
-//         bump = pda_wallet.bump
-//     )]
-//     pub pda_wallet: Account<'info, PDAWallet>,
+    require!(
+        verified_email_hash == email_hash,
+        ErrorCode::EmailHashMismatch
+    );
 
-//     pub system_program: Program<'info, System>,
-// }
+    ctx.accounts.user_account.set_inner(UserAccount {
+        email_hash,
+        bump: ctx.bumps.user_account,
+    });
 
-// /// PDA Wallet account data
-// #[account]
-// pub struct PDAWallet {
-//     /// The owner who can authorize transactions
-//     pub owner: Pubkey,
-//     /// The bump seed for PDA derivation
-//     pub bump: u8,
-//     /// The seed string used to create this PDA
-//     pub seed: String,
-// }
+    emit!(UserAccountCreated {
+        user_account: ctx.accounts.user_account.key(),
+        email_hash,
+    });
 
-// impl PDAWallet {
-//     /// Calculate the space needed for this account
-//     pub fn space(seed: &str) -> usize {
-//         8 + // discriminator
-//         32 + // owner pubkey
-//         1 + // bump
-//         4 + seed.len() // string length prefix + seed
-//     }
-// }
+    Ok(())
+}
+
+pub fn transfer_from_user_account_with_auth(
+    ctx: Context<TransferFromUserAccountWithAuth>,
+    email_hash: [u8; 32],
+    groth16_proof: SP1Groth16Proof,
+    amount: u64,
+) -> Result<()> {
+    let public_outputs = verify_jwt_proof(groth16_proof)?;
+    let verified_email_hash = public_outputs.email_hash;
+
+    require!(
+        verified_email_hash == email_hash,
+        ErrorCode::EmailHashMismatch
+    );
+
+    let user_account = &ctx.accounts.user_account;
+
+    let seeds = &[UserAccount::SEED_PREFIX, &email_hash, &[user_account.bump]];
+    let signer_seeds = &[&seeds[..]];
+
+    token::transfer(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            Transfer {
+                from: ctx.accounts.source_token_account.to_account_info(),
+                to: ctx.accounts.destination_token_account.to_account_info(),
+                authority: ctx.accounts.user_account.to_account_info(),
+            },
+            signer_seeds,
+        ),
+        amount,
+    )?;
+
+    emit!(TokensTransferred {
+        user_account: user_account.key(),
+        amount,
+        destination: ctx.accounts.destination_token_account.key(),
+        email_hash,
+    });
+
+    Ok(())
+}
+
+#[account]
+pub struct UserAccount {
+    pub email_hash: [u8; 32],
+    pub bump: u8,
+}
+
+impl UserAccount {
+    pub const SEED_PREFIX: &'static [u8] = b"user_account";
+
+    pub const SPACE: usize = 8 + // discriminator
+        32 + // email_hash (32 bytes for SHA256)
+        1; // bump
+
+    pub fn find_program_address(email_hash: &[u8; 32], program_id: &Pubkey) -> (Pubkey, u8) {
+        Pubkey::find_program_address(&[Self::SEED_PREFIX, email_hash], program_id)
+    }
+}
+
+#[event]
+pub struct UserAccountCreated {
+    pub user_account: Pubkey,
+    pub email_hash: [u8; 32],
+}
+
+#[event]
+pub struct TokensTransferred {
+    pub user_account: Pubkey,
+    pub amount: u64,
+    pub destination: Pubkey,
+    pub email_hash: [u8; 32],
+}
+
+#[error_code]
+pub enum ErrorCode {
+    #[msg("JWT proof verification failed")]
+    ProofVerificationFailed,
+    #[msg("Email hash mismatch")]
+    EmailHashMismatch,
+}

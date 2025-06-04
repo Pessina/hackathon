@@ -1,12 +1,11 @@
 use anchor_lang::prelude::*;
-use p3_baby_bear::BabyBear;
 use serde::{Deserialize, Serialize};
 use sp1_primitives::io::SP1PublicValues;
 use sp1_solana::verify_proof;
 
 use crate::constants;
 
-type PoseidonHash = [BabyBear; 8];
+type Sha256Hash = [u8; 32];
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct SP1Groth16Proof {
@@ -17,18 +16,15 @@ pub struct SP1Groth16Proof {
 // The order matters, it should be the same as the order of the public inputs in the SP1 program
 #[derive(Serialize, Deserialize)]
 pub struct PublicOutputs {
-    pub email_hash: PoseidonHash,
-    pub pk_hash: PoseidonHash,
+    pub email_hash: Sha256Hash,
+    pub pk_hash: Sha256Hash,
     pub nonce: String,
     pub verified: bool,
 }
 
-const JWT_VKEY_HASH: &str = "0x0064ed2fa8374e88956274696c857993416e36810a247a310a3b084804b49822";
+const JWT_VKEY_HASH: &str = "0x00390c74c859c201b98ba24a54e76c683b6a25625767e42529b156f19cfc4eae";
 
-pub fn verify_jwt_proof_impl(
-    _ctx: Context<VerifyProof>,
-    groth16_proof: SP1Groth16Proof,
-) -> Result<PublicOutputs> {
+pub fn verify_jwt_proof(groth16_proof: SP1Groth16Proof) -> Result<PublicOutputs> {
     let vk = constants::GROTH16_VK_5_0_0_BYTES;
 
     verify_proof(
