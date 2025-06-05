@@ -35,12 +35,10 @@ describe("zk-solana-aa", () => {
         }
       );
 
-      const tx = await program.methods
+      await program.methods
         .verifyJwtProof(groth16Proof)
         .preInstructions([computeBudgetInstruction])
         .rpc();
-
-      console.log("Proof verification transaction signature:", tx);
     } catch (error) {
       console.error("Proof verification failed:", error);
       throw error;
