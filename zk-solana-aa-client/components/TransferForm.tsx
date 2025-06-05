@@ -144,22 +144,19 @@ const TransferForm = ({ className }: TransferFormProps) => {
       if (userAccounts.length > 0) {
         const updatedAccounts = await Promise.all(
           userAccounts.map(async (account) => {
-            if (account.exists) {
-              try {
-                const balance = await getUserAccountBalance(
-                  zkProofData.email,
-                  account.salt
-                );
-                return { ...account, balance };
-              } catch (error) {
-                console.error(
-                  `Failed to update balance for ${account.salt}:`,
-                  error
-                );
-                return account;
-              }
+            try {
+              const balance = await getUserAccountBalance(
+                zkProofData.email,
+                account.salt
+              );
+              return { ...account, balance };
+            } catch (error) {
+              console.error(
+                `Failed to update balance for ${account.salt}:`,
+                error
+              );
+              return account;
             }
-            return account;
           })
         );
         setUserAccounts(updatedAccounts);
