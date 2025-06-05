@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -99,7 +99,7 @@ const TransferForm = ({ className }: TransferFormProps) => {
   };
 
   // Load user accounts
-  const loadUserAccounts = async () => {
+  const loadUserAccounts = useCallback(async () => {
     if (!zkProofData || !isReady) return;
 
     const accounts: UserAccount[] = [];
@@ -132,18 +132,30 @@ const TransferForm = ({ className }: TransferFormProps) => {
     }
 
     setUserAccounts(accounts);
-  };
+
+    return accounts;
+  }, [
+    zkProofData,
+    isReady,
+    checkUserAccountExists,
+    getUserAccountAddress,
+    getUserAccountBalance,
+    newSalt,
+  ]);
+
+  useEffect(() => {
+    loadUserAccounts();
+  }, [loadUserAccounts]);
 
   // Real-time balance polling for existing accounts
   useEffect(() => {
-    if (!zkProofData || !isReady) return;
-
-    loadUserAccounts();
+    if (!zkProofData) return;
 
     const interval = setInterval(async () => {
       if (userAccounts.length > 0) {
         const updatedAccounts = await Promise.all(
           userAccounts.map(async (account) => {
+            console.log(account);
             try {
               const balance = await getUserAccountBalance(
                 zkProofData.email,
@@ -164,7 +176,14 @@ const TransferForm = ({ className }: TransferFormProps) => {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [zkProofData, isReady, getUserAccountBalance, checkUserAccountExists]);
+  }, [
+    zkProofData,
+    isReady,
+    getUserAccountBalance,
+    checkUserAccountExists,
+    loadUserAccounts,
+    userAccounts,
+  ]);
 
   const handleGoogleSuccess = async (token: string) => {
     const { email, kid } = parseOIDCToken(token);
@@ -191,7 +210,7 @@ const TransferForm = ({ className }: TransferFormProps) => {
       }
 
       // Proving is working, do not remove this code
-      // // Get ZK proof from server
+      // Get ZK proof from server
       // const response = await fetch(
       //   `${NEXT_PUBLIC_JWT_ZK_PROOF_SERVER_URL}/generate-proof`,
       //   {
