@@ -6,9 +6,9 @@ const envSchema = z.object({
     .min(1, "Google Client ID is required"),
   NEXT_PUBLIC_SOLANA_RPC: z.string().url("Solana RPC must be a valid URL"),
   NEXT_PUBLIC_SOLANA_MNEMONIC: z.string().min(1, "Solana mnemonic is required"),
-  NEXT_PUBLIC_SOLANA_AA_ADDRESS: z
+  NEXT_PUBLIC_SOLANA_PROGRAM_ID: z
     .string()
-    .min(1, "Abstract Account contract address is required"),
+    .min(1, "Solana Program ID is required"),
   NEXT_PUBLIC_JWT_ZK_PROOF_SERVER_URL: z
     .string()
     .url("JWT ZK Proof Server URL must be a valid URL"),
@@ -23,7 +23,7 @@ export const useEnv = (): Required<Env> => {
     NEXT_PUBLIC_SOLANA_MNEMONIC: process.env.NEXT_PUBLIC_SOLANA_MNEMONIC,
     NEXT_PUBLIC_JWT_ZK_PROOF_SERVER_URL:
       process.env.NEXT_PUBLIC_JWT_ZK_PROOF_SERVER_URL,
-    NEXT_PUBLIC_SOLANA_AA_ADDRESS: process.env.NEXT_PUBLIC_SOLANA_AA_ADDRESS,
+    NEXT_PUBLIC_SOLANA_PROGRAM_ID: process.env.NEXT_PUBLIC_SOLANA_PROGRAM_ID,
   };
 
   try {

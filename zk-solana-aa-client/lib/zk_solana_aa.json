@@ -1,0 +1,332 @@
+{
+  "address": "DMztWS673fGnGLPReJa5pVNaMqG5VxRjjFcnNXaDzX54",
+  "metadata": {
+    "name": "zk_solana_aa",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "create_user_account_with_auth",
+      "discriminator": [
+        19,
+        168,
+        240,
+        109,
+        184,
+        246,
+        135,
+        45
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  97,
+                  99,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "email_hash"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "email_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "groth16_proof",
+          "type": {
+            "defined": {
+              "name": "SP1Groth16Proof"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "transfer_from_user_account_with_auth",
+      "discriminator": [
+        46,
+        71,
+        118,
+        129,
+        126,
+        28,
+        121,
+        228
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  97,
+                  99,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "email_hash"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "email_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "groth16_proof",
+          "type": {
+            "defined": {
+              "name": "SP1Groth16Proof"
+            }
+          }
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "verify_jwt_proof",
+      "discriminator": [
+        183,
+        183,
+        49,
+        88,
+        218,
+        249,
+        158,
+        66
+      ],
+      "accounts": [],
+      "args": [
+        {
+          "name": "groth16_proof",
+          "type": {
+            "defined": {
+              "name": "SP1Groth16Proof"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "UserAccount",
+      "discriminator": [
+        211,
+        33,
+        136,
+        16,
+        186,
+        110,
+        242,
+        127
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "SolTransferred",
+      "discriminator": [
+        131,
+        4,
+        43,
+        235,
+        208,
+        155,
+        28,
+        197
+      ]
+    },
+    {
+      "name": "UserAccountCreated",
+      "discriminator": [
+        16,
+        133,
+        225,
+        182,
+        145,
+        219,
+        182,
+        3
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "ProofVerificationFailed",
+      "msg": "JWT proof verification failed"
+    },
+    {
+      "code": 6001,
+      "name": "EmailHashMismatch",
+      "msg": "Email hash mismatch"
+    },
+    {
+      "code": 6002,
+      "name": "InsufficientBalance",
+      "msg": "Insufficient balance"
+    }
+  ],
+  "types": [
+    {
+      "name": "SP1Groth16Proof",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "proof",
+            "type": "bytes"
+          },
+          {
+            "name": "sp1_public_inputs",
+            "type": "bytes"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SolTransferred",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "email_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "UserAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "email_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UserAccountCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "email_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

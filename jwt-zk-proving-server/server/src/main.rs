@@ -53,8 +53,8 @@ async fn main() {
         .layer(CorsLayer::permissive())
         .with_state(app_state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    tracing::info!("JWT ZK Proof Server listening on http://0.0.0.0:3000");
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
+    tracing::info!("JWT ZK Proof Server listening on http://0.0.0.0:3001");
 
     axum::serve(listener, app).await.unwrap();
 }

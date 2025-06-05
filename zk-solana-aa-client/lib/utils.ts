@@ -10,16 +10,22 @@ export function parseOIDCToken(token: string): {
   issuer: string;
   sub: string;
   email: string;
+  kid: string;
 } {
-  const decoded = jwtDecode<{
+  const decodedHeader = jwtDecode<{
+    kid: string;
+  }>(token, { header: true });
+
+  const decodedBody = jwtDecode<{
     iss: string;
     sub: string;
     email: string;
-  }>(token);
+  }>(token, { header: false });
 
-  const { iss: issuer, sub, email } = decoded;
+  const { kid } = decodedHeader;
+  const { iss: issuer, sub, email } = decodedBody;
 
-  if (!issuer || !sub || !email) {
+  if (!issuer || !sub || !email || !kid) {
     throw new Error("Missing required fields in token");
   }
 
@@ -27,5 +33,6 @@ export function parseOIDCToken(token: string): {
     issuer,
     sub,
     email,
+    kid,
   };
 }
