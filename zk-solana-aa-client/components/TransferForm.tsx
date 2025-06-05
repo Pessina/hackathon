@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/card";
 import GoogleButton from "@/components/GoogleButton";
 import { toast } from "sonner";
-import { Send, Shield, Copy, Check } from "lucide-react";
+import { Send, Shield, Copy, Check, Plus } from "lucide-react";
 import { useEnv } from "@/hooks/useEnv";
 import { useSolanaProgram } from "@/hooks/useSolanaProgram";
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -39,6 +39,13 @@ interface ZKProofData {
   };
 }
 
+interface UserAccount {
+  salt: string;
+  address: string;
+  balance: number;
+  exists: boolean;
+}
+
 const TransferForm = ({ className }: TransferFormProps) => {
   const { NEXT_PUBLIC_JWT_ZK_PROOF_SERVER_URL } = useEnv();
   const { connected } = useWallet();
@@ -54,9 +61,13 @@ const TransferForm = ({ className }: TransferFormProps) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [zkProofData, setZkProofData] = useState<ZKProofData | null>(null);
-  const [userAccountExists, setUserAccountExists] = useState(false);
-  const [userAccountBalance, setUserAccountBalance] = useState<number>(0);
+  const [userAccounts, setUserAccounts] = useState<UserAccount[]>([]);
+  const [selectedSalt, setSelectedSalt] = useState<string>("default");
+  const [newSalt, setNewSalt] = useState<string>("");
   const [copiedAddress, setCopiedAddress] = useState(false);
+
+  // Predefined salts for common account types
+  const defaultSalts = ["default", "savings", "business", "trading"];
 
   const {
     register,
@@ -74,38 +85,105 @@ const TransferForm = ({ className }: TransferFormProps) => {
 
   const watchedAmount = watch("amount");
 
+  const currentAccount = userAccounts.find((acc) => acc.salt === selectedSalt);
+
   // Copy PDA address function
   const copyPDAAddress = async () => {
-    if (!zkProofData) return;
+    if (!zkProofData || !selectedSalt) return;
 
-    const [pdaAddress] = getUserAccountAddress(zkProofData.email);
+    const [pdaAddress] = getUserAccountAddress(zkProofData.email, selectedSalt);
     await navigator.clipboard.writeText(pdaAddress.toString());
     setCopiedAddress(true);
     toast.success("PDA address copied to clipboard!");
     setTimeout(() => setCopiedAddress(false), 2000);
   };
 
-  // Real-time balance polling
-  useEffect(() => {
-    if (!zkProofData || !userAccountExists || !isReady) return;
+  // Load user accounts
+  const loadUserAccounts = useCallback(async () => {
+    if (!zkProofData || !isReady) return;
 
-    const pollBalance = async () => {
+    const accounts: UserAccount[] = [];
+
+    // Check all predefined salts + any custom ones
+    const allSalts = [...defaultSalts];
+    if (newSalt && !allSalts.includes(newSalt)) {
+      allSalts.push(newSalt);
+    }
+
+    for (const salt of allSalts) {
       try {
-        const balance = await getUserAccountBalance(zkProofData.email);
-        setUserAccountBalance(balance);
+        const exists = await checkUserAccountExists(zkProofData.email, salt);
+        const [address] = getUserAccountAddress(zkProofData.email, salt);
+        let balance = 0;
+
+        if (exists) {
+          balance = await getUserAccountBalance(zkProofData.email, salt);
+        }
+
+        accounts.push({
+          salt,
+          address: address.toString(),
+          balance,
+          exists,
+        });
       } catch (error) {
-        console.error("Failed to fetch balance:", error);
+        console.error(`Failed to check account for salt ${salt}:`, error);
       }
-    };
+    }
 
-    // Poll immediately
-    pollBalance();
+    setUserAccounts(accounts);
 
-    // Then poll every 5 seconds
-    const interval = setInterval(pollBalance, 5000);
+    return accounts;
+  }, [
+    zkProofData,
+    isReady,
+    checkUserAccountExists,
+    getUserAccountAddress,
+    getUserAccountBalance,
+    newSalt,
+  ]);
+
+  useEffect(() => {
+    loadUserAccounts();
+  }, [loadUserAccounts]);
+
+  // Real-time balance polling for existing accounts
+  useEffect(() => {
+    if (!zkProofData) return;
+
+    const interval = setInterval(async () => {
+      if (userAccounts.length > 0) {
+        const updatedAccounts = await Promise.all(
+          userAccounts.map(async (account) => {
+            console.log(account);
+            try {
+              const balance = await getUserAccountBalance(
+                zkProofData.email,
+                account.salt
+              );
+              return { ...account, balance };
+            } catch (error) {
+              console.error(
+                `Failed to update balance for ${account.salt}:`,
+                error
+              );
+              return account;
+            }
+          })
+        );
+        setUserAccounts(updatedAccounts);
+      }
+    }, 5000);
 
     return () => clearInterval(interval);
-  }, [zkProofData, userAccountExists, isReady, getUserAccountBalance]);
+  }, [
+    zkProofData,
+    isReady,
+    getUserAccountBalance,
+    checkUserAccountExists,
+    loadUserAccounts,
+    userAccounts,
+  ]);
 
   const handleGoogleSuccess = async (token: string) => {
     const { email, kid } = parseOIDCToken(token);
@@ -132,7 +210,7 @@ const TransferForm = ({ className }: TransferFormProps) => {
       }
 
       // Proving is working, do not remove this code
-      // // Get ZK proof from server
+      // Get ZK proof from server
       // const response = await fetch(
       //   `${NEXT_PUBLIC_JWT_ZK_PROOF_SERVER_URL}/generate-proof`,
       //   {
@@ -184,26 +262,20 @@ const TransferForm = ({ className }: TransferFormProps) => {
 
       setIsAuthenticated(true);
       toast.success("Successfully signed in with Google!");
-
-      // Check account status
-      if (isReady) {
-        const exists = await checkUserAccountExists(email);
-        setUserAccountExists(exists);
-
-        if (exists) {
-          const balance = await getUserAccountBalance(email);
-          setUserAccountBalance(balance);
-        }
-      }
     } catch (error) {
       console.error("Failed to get ZK proof:", error);
       toast.error("Failed to generate ZK proof. Please try again.");
     }
   };
 
-  const handleCreateAccount = async () => {
+  const handleCreateAccount = async (salt: string) => {
     if (!zkProofData || !connected || !isReady) {
       toast.error("Please connect your wallet and sign in with Google first");
+      return;
+    }
+
+    if (salt.length > 32) {
+      toast.error("Salt must be 32 characters or less");
       return;
     }
 
@@ -212,17 +284,18 @@ const TransferForm = ({ className }: TransferFormProps) => {
     try {
       const result = await createUserAccount({
         email: zkProofData.email,
+        salt,
         groth16Proof: zkProofData.groth16Proof,
       });
 
       toast.success(
-        `Account created successfully! Address: ${result.userAccount.toString()}`
+        `Account created successfully! Salt: ${salt}, Address: ${result.userAccount.toString()}`
       );
-      setUserAccountExists(true);
 
-      // Update balance
-      const balance = await getUserAccountBalance(zkProofData.email);
-      setUserAccountBalance(balance);
+      // Reload accounts to show the new one
+      await loadUserAccounts();
+      setSelectedSalt(salt);
+      setNewSalt("");
     } catch (error) {
       console.error("Account creation error:", error);
       toast.error(
@@ -236,14 +309,21 @@ const TransferForm = ({ className }: TransferFormProps) => {
   };
 
   const onSubmit = async (data: TransferData) => {
-    if (!zkProofData || !connected || !isReady) {
+    if (!zkProofData || !connected || !isReady || !currentAccount) {
       toast.error("Please connect your wallet and sign in with Google first");
       return;
     }
 
-    if (data.amount > userAccountBalance) {
+    if (!currentAccount.exists) {
+      toast.error("Selected account does not exist. Please create it first.");
+      return;
+    }
+
+    if (data.amount > currentAccount.balance) {
       toast.error(
-        `Insufficient balance. Available: ${userAccountBalance.toFixed(4)} SOL`
+        `Insufficient balance. Available: ${currentAccount.balance.toFixed(
+          4
+        )} SOL`
       );
       return;
     }
@@ -253,6 +333,7 @@ const TransferForm = ({ className }: TransferFormProps) => {
     try {
       const result = await transferFromUserAccount({
         email: zkProofData.email,
+        salt: selectedSalt,
         groth16Proof: zkProofData.groth16Proof,
         amount: data.amount,
         destinationAddress: data.destinationAddress,
@@ -260,8 +341,9 @@ const TransferForm = ({ className }: TransferFormProps) => {
 
       toast.success(`Transfer successful! Transaction: ${result.signature}`);
 
-      // Reset form (balance will be updated automatically by polling)
+      // Reset form and reload accounts
       reset();
+      await loadUserAccounts();
     } catch (error) {
       console.error("Transfer error:", error);
       toast.error(
@@ -277,8 +359,9 @@ const TransferForm = ({ className }: TransferFormProps) => {
   const signOut = () => {
     setIsAuthenticated(false);
     setZkProofData(null);
-    setUserAccountExists(false);
-    setUserAccountBalance(0);
+    setUserAccounts([]);
+    setSelectedSalt("default");
+    setNewSalt("");
     reset();
     toast.info("Signed out successfully");
   };
@@ -293,7 +376,7 @@ const TransferForm = ({ className }: TransferFormProps) => {
         </div>
         <CardTitle className="text-2xl font-bold">ZK Solana Transfer</CardTitle>
         <CardDescription>
-          Secure, privacy-preserving transfers on Solana
+          Secure, privacy-preserving transfers with multiple accounts
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -333,88 +416,145 @@ const TransferForm = ({ className }: TransferFormProps) => {
               </Button>
             </div>
 
-            {/* Account Status */}
+            {/* Email Display */}
             {zkProofData && (
               <div className="p-3 bg-blue-50 dark:bg-blue-950 rounded-lg border border-blue-200 dark:border-blue-800">
-                <div className="text-xs space-y-2">
-                  <div className="font-medium text-blue-800 dark:text-blue-200">
-                    Email: {zkProofData.email}
-                  </div>
-                  <div className="text-blue-700 dark:text-blue-300">
-                    Status:{" "}
-                    <span
-                      className={
-                        userAccountExists ? "text-green-600" : "text-red-600"
-                      }
-                    >
-                      {userAccountExists
-                        ? "Account Created"
-                        : "Account Not Created"}
-                    </span>
-                  </div>
-                  {userAccountExists && (
-                    <>
-                      <div className="text-blue-700 dark:text-blue-300">
-                        Balance: {userAccountBalance.toFixed(4)} SOL
-                        <span className="text-xs text-green-600 ml-1">
-                          ● Live
-                        </span>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-blue-700 dark:text-blue-300 font-medium">
-                          PDA Address:
-                        </div>
-                        <div className="flex items-center space-x-2 p-2 bg-white dark:bg-gray-800 rounded border">
-                          <code className="text-xs font-mono text-gray-800 dark:text-gray-200 flex-1 break-all">
-                            {getUserAccountAddress(
-                              zkProofData.email
-                            )[0].toString()}
-                          </code>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={copyPDAAddress}
-                            className="h-6 w-6 p-0 flex-shrink-0"
-                          >
-                            {copiedAddress ? (
-                              <Check className="h-3 w-3 text-green-600" />
-                            ) : (
-                              <Copy className="h-3 w-3" />
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-                    </>
-                  )}
+                <div className="text-xs font-medium text-blue-800 dark:text-blue-200">
+                  Email: {zkProofData.email}
                 </div>
               </div>
             )}
 
-            {/* Create Account or Transfer Form */}
-            {!userAccountExists ? (
-              <Button
-                onClick={handleCreateAccount}
-                disabled={isLoading}
-                className="w-full"
-                size="lg"
+            {/* Account Selection */}
+            <div className="space-y-3">
+              <Label>Select Account</Label>
+              <select
+                value={selectedSalt}
+                onChange={(e) => setSelectedSalt(e.target.value)}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isLoading ? (
-                  <div className="flex items-center space-x-2">
-                    <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    <span>Creating Account...</span>
-                  </div>
-                ) : (
-                  "Create ZK Account"
+                {userAccounts.length === 0 && (
+                  <option value="">No accounts available</option>
                 )}
-              </Button>
-            ) : (
+                {userAccounts.map((account) => (
+                  <option key={account.salt} value={account.salt}>
+                    {account.salt}{" "}
+                    {account.exists
+                      ? `(${account.balance.toFixed(4)} SOL)`
+                      : "(Not created)"}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Current Account Info */}
+            {currentAccount && (
+              <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border">
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">Status:</span>
+                    <span
+                      className={
+                        currentAccount.exists
+                          ? "text-green-600"
+                          : "text-red-600"
+                      }
+                    >
+                      {currentAccount.exists ? "Active" : "Not Created"}
+                    </span>
+                  </div>
+                  {currentAccount.exists && (
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">Balance:</span>
+                      <span>
+                        {currentAccount.balance.toFixed(4)} SOL
+                        <span className="text-xs text-green-600 ml-1">
+                          ● Live
+                        </span>
+                      </span>
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    <div className="font-medium">Address:</div>
+                    <div className="flex items-center space-x-2 p-2 bg-white dark:bg-gray-800 rounded border">
+                      <code className="text-xs font-mono text-gray-800 dark:text-gray-200 flex-1 break-all">
+                        {currentAccount.address}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={copyPDAAddress}
+                        className="h-6 w-6 p-0 flex-shrink-0"
+                      >
+                        {copiedAddress ? (
+                          <Check className="h-3 w-3 text-green-600" />
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Create New Account */}
+            <div className="space-y-3">
+              <Label>Create New Account</Label>
+              <div className="flex space-x-2">
+                <Input
+                  placeholder="Enter salt (e.g., 'personal')"
+                  value={newSalt}
+                  onChange={(e) => setNewSalt(e.target.value)}
+                  maxLength={32}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleCreateAccount(newSalt)}
+                  disabled={!newSalt || isLoading || newSalt.length > 32}
+                  className="flex-shrink-0"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Salt must be 32 characters or less
+              </div>
+            </div>
+
+            {/* Quick Create Buttons */}
+            <div className="space-y-2">
+              <Label className="text-xs">Quick Create:</Label>
+              <div className="flex flex-wrap gap-2">
+                {defaultSalts
+                  .filter(
+                    (salt) =>
+                      !userAccounts.find((acc) => acc.salt === salt)?.exists
+                  )
+                  .map((salt) => (
+                    <Button
+                      key={salt}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCreateAccount(salt)}
+                      disabled={isLoading}
+                      className="text-xs"
+                    >
+                      {salt}
+                    </Button>
+                  ))}
+              </div>
+            </div>
+
+            {/* Transfer Form */}
+            {currentAccount?.exists ? (
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-                {/* Amount Field */}
                 <div className="space-y-2">
                   <Label htmlFor="amount">
                     Amount (SOL)
                     <span className="text-xs text-muted-foreground ml-2">
-                      Available: {userAccountBalance.toFixed(4)}
+                      Available: {currentAccount.balance.toFixed(4)}
                     </span>
                   </Label>
                   <Input
@@ -422,7 +562,7 @@ const TransferForm = ({ className }: TransferFormProps) => {
                     type="number"
                     step="0.0001"
                     min="0"
-                    max={userAccountBalance}
+                    max={currentAccount.balance}
                     placeholder="0.1"
                     {...register("amount", {
                       required: "Amount is required",
@@ -431,7 +571,7 @@ const TransferForm = ({ className }: TransferFormProps) => {
                         message: "Minimum amount is 0.0001 SOL",
                       },
                       max: {
-                        value: userAccountBalance,
+                        value: currentAccount.balance,
                         message: "Amount exceeds available balance",
                       },
                       valueAsNumber: true,
@@ -445,7 +585,6 @@ const TransferForm = ({ className }: TransferFormProps) => {
                   )}
                 </div>
 
-                {/* Destination Address Field */}
                 <div className="space-y-2">
                   <Label htmlFor="destination">Destination Address</Label>
                   <Input
@@ -467,14 +606,13 @@ const TransferForm = ({ className }: TransferFormProps) => {
                   )}
                 </div>
 
-                {/* Submit Button */}
                 <Button
                   type="submit"
                   disabled={
                     isLoading ||
                     !isValid ||
-                    userAccountBalance === 0 ||
-                    watchedAmount > userAccountBalance
+                    currentAccount.balance === 0 ||
+                    watchedAmount > currentAccount.balance
                   }
                   className="w-full"
                   size="lg"
@@ -492,6 +630,11 @@ const TransferForm = ({ className }: TransferFormProps) => {
                   )}
                 </Button>
               </form>
+            ) : (
+              <div className="text-center text-muted-foreground text-sm">
+                Select an existing account or create a new one to start
+                transferring
+              </div>
             )}
           </div>
         )}

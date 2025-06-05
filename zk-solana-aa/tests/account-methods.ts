@@ -9,7 +9,7 @@ import {
 } from "@solana/web3.js";
 import * as assert from "assert";
 
-describe("Account Methods - Native SOL", () => {
+describe("Account Methods - Native SOL with Salt Support", () => {
   anchor.setProvider(anchor.AnchorProvider.env());
 
   const program = anchor.workspace.zkSolanaAa as Program<ZkSolanaAa>;
@@ -34,7 +34,14 @@ describe("Account Methods - Native SOL", () => {
     sp1PublicInputs: Buffer.from(PUBLIC_VALUES_HEX, "hex"),
   };
 
-  let userAccount: anchor.web3.PublicKey;
+  // Test salts for multiple accounts
+  const SALT_DEFAULT = "default";
+  const SALT_SAVINGS = "savings";
+  const SALT_BUSINESS = "business";
+
+  let userAccountDefault: anchor.web3.PublicKey;
+  let userAccountSavings: anchor.web3.PublicKey;
+  let userAccountBusiness: anchor.web3.PublicKey;
   let payer: Keypair;
   let authority: Keypair;
   let destination: Keypair;
@@ -57,6 +64,14 @@ describe("Account Methods - Native SOL", () => {
     await Promise.all(confirmPromises);
   };
 
+  const getUserAccountAddress = (emailHash: Uint8Array, salt: string) => {
+    const [userAccountPda] = anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("user_account"), Buffer.from(emailHash), Buffer.from(salt)],
+      program.programId
+    );
+    return userAccountPda;
+  };
+
   before(async () => {
     payer = Keypair.generate();
     authority = Keypair.generate();
@@ -67,15 +82,22 @@ describe("Account Methods - Native SOL", () => {
       2 * LAMPORTS_PER_SOL
     );
 
-    const [userAccountPda] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("user_account"), Buffer.from(EMAIL_HASH)],
-      program.programId
-    );
-    userAccount = userAccountPda;
+    // Generate PDAs for different salts
+    userAccountDefault = getUserAccountAddress(EMAIL_HASH, SALT_DEFAULT);
+    userAccountSavings = getUserAccountAddress(EMAIL_HASH, SALT_SAVINGS);
+    userAccountBusiness = getUserAccountAddress(EMAIL_HASH, SALT_BUSINESS);
 
-    // Create the user account once for all tests
+    console.log("Default account address:", userAccountDefault.toString());
+    console.log("Savings account address:", userAccountSavings.toString());
+    console.log("Business account address:", userAccountBusiness.toString());
+
+    // Create the default user account
     await program.methods
-      .createUserAccountWithAuth(Array.from(EMAIL_HASH), groth16Proof)
+      .createUserAccountWithAuth(
+        Array.from(EMAIL_HASH),
+        SALT_DEFAULT,
+        groth16Proof
+      )
       .accounts({
         payer: payer.publicKey,
       })
@@ -83,23 +105,79 @@ describe("Account Methods - Native SOL", () => {
       .signers([payer])
       .rpc();
 
-    console.log("User account created successfully:", userAccount.toString());
+    console.log(
+      "Default user account created successfully:",
+      userAccountDefault.toString()
+    );
   });
 
-  it("Verifies user account was created", async () => {
+  it("Verifies user account was created with salt", async () => {
     const userAccountData = await program.account.userAccount.fetch(
-      userAccount
+      userAccountDefault
     );
     assert.deepEqual(userAccountData.emailHash, Array.from(EMAIL_HASH));
+    assert.equal(userAccountData.salt, SALT_DEFAULT);
     assert.ok(typeof userAccountData.bump === "number");
   });
 
-  it("Funds user account and transfers SOL with auth", async () => {
-    // Fund the user account by direct transfer (simulating external funding)
+  it("Creates multiple accounts with different salts for same email", async () => {
+    // Create savings account
+    await program.methods
+      .createUserAccountWithAuth(
+        Array.from(EMAIL_HASH),
+        SALT_SAVINGS,
+        groth16Proof
+      )
+      .accounts({
+        payer: payer.publicKey,
+      })
+      .preInstructions([createComputeBudgetInstruction()])
+      .signers([payer])
+      .rpc();
+
+    // Create business account
+    await program.methods
+      .createUserAccountWithAuth(
+        Array.from(EMAIL_HASH),
+        SALT_BUSINESS,
+        groth16Proof
+      )
+      .accounts({
+        payer: payer.publicKey,
+      })
+      .preInstructions([createComputeBudgetInstruction()])
+      .signers([payer])
+      .rpc();
+
+    // Verify all accounts exist and have correct data
+    const defaultAccountData = await program.account.userAccount.fetch(
+      userAccountDefault
+    );
+    const savingsAccountData = await program.account.userAccount.fetch(
+      userAccountSavings
+    );
+    const businessAccountData = await program.account.userAccount.fetch(
+      userAccountBusiness
+    );
+
+    // All should have same email hash but different salts
+    assert.deepEqual(defaultAccountData.emailHash, Array.from(EMAIL_HASH));
+    assert.deepEqual(savingsAccountData.emailHash, Array.from(EMAIL_HASH));
+    assert.deepEqual(businessAccountData.emailHash, Array.from(EMAIL_HASH));
+
+    assert.equal(defaultAccountData.salt, SALT_DEFAULT);
+    assert.equal(savingsAccountData.salt, SALT_SAVINGS);
+    assert.equal(businessAccountData.salt, SALT_BUSINESS);
+
+    console.log("All three accounts created successfully with different salts");
+  });
+
+  it("Funds and transfers from specific salted account", async () => {
+    // Fund the savings account
     const fundTx = new Transaction().add(
       anchor.web3.SystemProgram.transfer({
         fromPubkey: payer.publicKey,
-        toPubkey: userAccount,
+        toPubkey: userAccountSavings,
         lamports: INITIAL_SOL_AMOUNT,
       })
     );
@@ -107,34 +185,26 @@ describe("Account Methods - Native SOL", () => {
     await provider.connection.confirmTransaction(fundSig);
 
     // Check initial balance
-    const initialBalance = await provider.connection.getBalance(userAccount);
+    const initialBalance = await provider.connection.getBalance(
+      userAccountSavings
+    );
     const destinationInitialBalance = await provider.connection.getBalance(
       destination.publicKey
     );
 
     console.log(
-      "Initial user account balance:",
+      "Initial savings account balance:",
       initialBalance / LAMPORTS_PER_SOL,
       "SOL"
     );
-    console.log(
-      "Initial destination balance:",
-      destinationInitialBalance / LAMPORTS_PER_SOL,
-      "SOL"
-    );
 
-    // Calculate rent-exempt minimum for user account
+    // Calculate rent-exempt minimum for user account (updated for new size)
     const rentExemptMinimum =
       await provider.connection.getMinimumBalanceForRentExemption(
-        8 + 32 + 1 // UserAccount::SPACE (discriminator + email_hash + bump)
+        8 + 32 + 4 + 32 + 1 // UserAccount::SPACE (discriminator + email_hash + salt + bump)
       );
     const availableBalance = initialBalance - rentExemptMinimum;
 
-    console.log(
-      "Rent exempt minimum:",
-      rentExemptMinimum / LAMPORTS_PER_SOL,
-      "SOL"
-    );
     console.log(
       "Available balance for transfer:",
       availableBalance / LAMPORTS_PER_SOL,
@@ -149,10 +219,11 @@ describe("Account Methods - Native SOL", () => {
       } SOL, Need: ${TRANSFER_AMOUNT / LAMPORTS_PER_SOL} SOL`
     );
 
-    // Transfer SOL from user account to destination using the program method
+    // Transfer SOL from savings account to destination using the program method
     const tx = await program.methods
       .transferFromUserAccountWithAuth(
         Array.from(EMAIL_HASH),
+        SALT_SAVINGS,
         groth16Proof,
         new anchor.BN(TRANSFER_AMOUNT)
       )
@@ -167,20 +238,11 @@ describe("Account Methods - Native SOL", () => {
     console.log("Transfer transaction signature:", tx);
 
     // Check final balances
-    const finalBalance = await provider.connection.getBalance(userAccount);
+    const finalBalance = await provider.connection.getBalance(
+      userAccountSavings
+    );
     const destinationFinalBalance = await provider.connection.getBalance(
       destination.publicKey
-    );
-
-    console.log(
-      "Final user account balance:",
-      finalBalance / LAMPORTS_PER_SOL,
-      "SOL"
-    );
-    console.log(
-      "Final destination balance:",
-      destinationFinalBalance / LAMPORTS_PER_SOL,
-      "SOL"
     );
 
     // Verify the transfer
@@ -191,7 +253,7 @@ describe("Account Methods - Native SOL", () => {
     assert.equal(
       finalBalance,
       expectedFinalBalance,
-      "User account should have reduced balance after transfer"
+      "Savings account should have reduced balance after transfer"
     );
     assert.equal(
       destinationFinalBalance,
@@ -202,18 +264,19 @@ describe("Account Methods - Native SOL", () => {
 
   it("Fails to create user account with wrong email hash", async () => {
     const wrongEmailHash = new Uint8Array(32).fill(1);
-    const wrongPayer = Keypair.generate();
-
-    await airdropToAccounts([wrongPayer.publicKey], 2 * LAMPORTS_PER_SOL);
 
     try {
       await program.methods
-        .createUserAccountWithAuth(Array.from(wrongEmailHash), groth16Proof)
+        .createUserAccountWithAuth(
+          Array.from(wrongEmailHash),
+          SALT_DEFAULT,
+          groth16Proof
+        )
         .accounts({
-          payer: wrongPayer.publicKey,
+          payer: payer.publicKey,
         })
         .preInstructions([createComputeBudgetInstruction()])
-        .signers([wrongPayer])
+        .signers([payer])
         .rpc();
 
       assert.fail("Expected transaction to fail with email hash mismatch");
@@ -223,13 +286,12 @@ describe("Account Methods - Native SOL", () => {
     }
   });
 
-  it("Fails to transfer with wrong email hash", async () => {
-    const wrongEmailHash = new Uint8Array(32).fill(2);
-
+  it("Fails to transfer with wrong salt", async () => {
     try {
       await program.methods
         .transferFromUserAccountWithAuth(
-          Array.from(wrongEmailHash),
+          Array.from(EMAIL_HASH),
+          "wrong_salt",
           groth16Proof,
           new anchor.BN(TRANSFER_AMOUNT)
         )
@@ -241,24 +303,24 @@ describe("Account Methods - Native SOL", () => {
         .signers([authority])
         .rpc();
 
-      assert.fail("Expected transaction to fail with email hash mismatch");
+      assert.fail("Expected transaction to fail with salt mismatch");
     } catch (error: any) {
       console.log("Expected error:", error.message);
       assert.ok(
-        error.message.includes("EmailHashMismatch") ||
-          error.message.includes("AccountNotInitialized")
+        error.message.includes("AccountNotInitialized") ||
+          error.message.includes("SaltMismatch")
       );
     }
   });
 
   it("Fails to transfer with insufficient balance", async () => {
-    // Don't fund the account additional - it should only have rent-exempt minimum plus any previous balance
     const largeTransferAmount = 10 * LAMPORTS_PER_SOL; // Much more than available
 
     try {
       await program.methods
         .transferFromUserAccountWithAuth(
           Array.from(EMAIL_HASH),
+          SALT_DEFAULT,
           groth16Proof,
           new anchor.BN(largeTransferAmount)
         )
@@ -277,19 +339,19 @@ describe("Account Methods - Native SOL", () => {
     }
   });
 
-  it("Fails to create user account again (duplicate)", async () => {
-    const duplicatePayer = Keypair.generate();
-
-    await airdropToAccounts([duplicatePayer.publicKey], 2 * LAMPORTS_PER_SOL);
-
+  it("Fails to create user account again with same salt (duplicate)", async () => {
     try {
       await program.methods
-        .createUserAccountWithAuth(Array.from(EMAIL_HASH), groth16Proof)
+        .createUserAccountWithAuth(
+          Array.from(EMAIL_HASH),
+          SALT_DEFAULT,
+          groth16Proof
+        )
         .accounts({
-          payer: duplicatePayer.publicKey,
+          payer: payer.publicKey,
         })
         .preInstructions([createComputeBudgetInstruction()])
-        .signers([duplicatePayer])
+        .signers([payer])
         .rpc();
 
       assert.fail(
@@ -302,6 +364,37 @@ describe("Account Methods - Native SOL", () => {
         error.message.includes("already in use") ||
           error.message.includes("AccountAlreadyInitialized") ||
           error.message.includes("custom program error: 0x0")
+      );
+    }
+  });
+
+  it("Fails to create account with salt that's too long", async () => {
+    const longSalt = "a".repeat(33); // 33 characters, exceeds max of 32
+
+    try {
+      await program.methods
+        .createUserAccountWithAuth(
+          Array.from(EMAIL_HASH),
+          longSalt,
+          groth16Proof
+        )
+        .accounts({
+          payer: payer.publicKey, // Reuse existing payer instead of creating new one
+        })
+        .preInstructions([createComputeBudgetInstruction()])
+        .signers([payer])
+        .rpc();
+
+      assert.fail("Expected transaction to fail with salt too long");
+    } catch (error: any) {
+      console.log("Expected error for salt too long:", error.message);
+      // The error occurs at account resolution level when salt is too long
+      assert.ok(
+        error.message.includes("SaltTooLong") ||
+          error.message.includes(
+            "Reached maximum depth for account resolution"
+          ) ||
+          error.message.includes("Unresolved accounts")
       );
     }
   });

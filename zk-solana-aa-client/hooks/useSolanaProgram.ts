@@ -19,6 +19,7 @@ interface SP1Groth16Proof {
 
 interface TransferParams {
   email: string;
+  salt: string;
   groth16Proof: SP1Groth16Proof;
   amount: number; // in SOL
   destinationAddress: string;
@@ -26,6 +27,7 @@ interface TransferParams {
 
 interface CreateAccountParams {
   email: string;
+  salt: string;
   groth16Proof: SP1Groth16Proof;
   payer?: PublicKey;
 }
@@ -75,10 +77,14 @@ export const useSolanaProgram = () => {
   }, []);
 
   const getUserAccountAddress = useCallback(
-    (email: string): [PublicKey, number] => {
+    (email: string, salt: string): [PublicKey, number] => {
       const emailHash = hashEmail(email);
       return PublicKey.findProgramAddressSync(
-        [Buffer.from("user_account"), Buffer.from(emailHash)],
+        [
+          Buffer.from("user_account"),
+          Buffer.from(emailHash),
+          Buffer.from(salt),
+        ],
         programId
       );
     },
@@ -86,17 +92,17 @@ export const useSolanaProgram = () => {
   );
 
   const createUserAccount = useCallback(
-    async ({ email, groth16Proof, payer }: CreateAccountParams) => {
+    async ({ email, salt, groth16Proof, payer }: CreateAccountParams) => {
       if (!program || !publicKey || !sendTransaction) {
         throw new Error("Program not initialized or wallet not connected");
       }
 
       const emailHash = hashEmail(email);
       const payerKey = payer || publicKey;
-      const [userAccountAddress] = getUserAccountAddress(email);
+      const [userAccountAddress] = getUserAccountAddress(email, salt);
 
       const tx = await program.methods
-        .createUserAccountWithAuth(Array.from(emailHash), groth16Proof)
+        .createUserAccountWithAuth(Array.from(emailHash), salt, groth16Proof)
         .accounts({
           payer: payerKey,
           userAccount: userAccountAddress,
@@ -111,7 +117,7 @@ export const useSolanaProgram = () => {
 
       return {
         signature,
-        userAccount: getUserAccountAddress(email)[0],
+        userAccount: getUserAccountAddress(email, salt)[0],
       };
     },
     [
@@ -127,6 +133,7 @@ export const useSolanaProgram = () => {
   const transferFromUserAccount = useCallback(
     async ({
       email,
+      salt,
       groth16Proof,
       amount,
       destinationAddress,
@@ -138,11 +145,12 @@ export const useSolanaProgram = () => {
       const emailHash = hashEmail(email);
       const destination = new PublicKey(destinationAddress);
       const amountInLamports = new BN(amount * LAMPORTS_PER_SOL);
-      const [userAccountAddress] = getUserAccountAddress(email);
+      const [userAccountAddress] = getUserAccountAddress(email, salt);
 
       const tx = await program.methods
         .transferFromUserAccountWithAuth(
           Array.from(emailHash),
+          salt,
           groth16Proof,
           amountInLamports
         )
@@ -161,7 +169,7 @@ export const useSolanaProgram = () => {
 
       return {
         signature,
-        userAccount: getUserAccountAddress(email)[0],
+        userAccount: getUserAccountAddress(email, salt)[0],
       };
     },
     [
@@ -175,14 +183,14 @@ export const useSolanaProgram = () => {
   );
 
   const getUserAccountBalance = useCallback(
-    async (email: string): Promise<number> => {
-      const [userAccountAddress] = getUserAccountAddress(email);
+    async (email: string, salt: string): Promise<number> => {
+      const [userAccountAddress] = getUserAccountAddress(email, salt);
       const balance = await connection.getBalance(userAccountAddress);
 
-      // Calculate rent-exempt minimum
+      // Calculate rent-exempt minimum (updated for new account size with salt)
       const rentExemptMinimum =
         await connection.getMinimumBalanceForRentExemption(
-          8 + 32 + 1 // UserAccount::SPACE (discriminator + email_hash + bump)
+          8 + 32 + 4 + 32 + 1 // UserAccount::SPACE (discriminator + email_hash + salt + bump)
         );
 
       const availableBalance = Math.max(0, balance - rentExemptMinimum);
@@ -192,12 +200,11 @@ export const useSolanaProgram = () => {
   );
 
   const checkUserAccountExists = useCallback(
-    async (email: string): Promise<boolean> => {
+    async (email: string, salt: string): Promise<boolean> => {
       if (!program) return false;
 
       try {
-        const [userAccountAddress] = getUserAccountAddress(email);
-        // Use program.account with the correct account name
+        const [userAccountAddress] = getUserAccountAddress(email, salt);
         const accountInfo = await connection.getAccountInfo(userAccountAddress);
         return !!accountInfo;
       } catch {
@@ -205,6 +212,22 @@ export const useSolanaProgram = () => {
       }
     },
     [program, connection, getUserAccountAddress]
+  );
+
+  const getUserAccountData = useCallback(
+    async (email: string, salt: string) => {
+      if (!program) return null;
+
+      try {
+        const [userAccountAddress] = getUserAccountAddress(email, salt);
+        return await (program.account as any).userAccount.fetch(
+          userAccountAddress
+        );
+      } catch {
+        return null;
+      }
+    },
+    [program, getUserAccountAddress]
   );
 
   return {
@@ -216,5 +239,6 @@ export const useSolanaProgram = () => {
     transferFromUserAccount,
     getUserAccountBalance,
     checkUserAccountExists,
+    getUserAccountData,
   };
 };

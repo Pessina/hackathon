@@ -23,20 +23,23 @@ pub mod zk_solana_aa {
     pub fn create_user_account_with_auth(
         ctx: Context<CreateUserAccountWithAuth>,
         email_hash: [u8; 32],
+        salt: String,
         groth16_proof: SP1Groth16Proof,
     ) -> Result<()> {
-        contract::accounts::create_user_account_with_auth(ctx, email_hash, groth16_proof)
+        contract::accounts::create_user_account_with_auth(ctx, email_hash, salt, groth16_proof)
     }
 
     pub fn transfer_from_user_account_with_auth(
         ctx: Context<TransferFromUserAccountWithAuth>,
         email_hash: [u8; 32],
+        salt: String,
         groth16_proof: SP1Groth16Proof,
         amount: u64,
     ) -> Result<()> {
         contract::accounts::transfer_from_user_account_with_auth(
             ctx,
             email_hash,
+            salt,
             groth16_proof,
             amount,
         )

@@ -50,6 +50,10 @@
               {
                 "kind": "arg",
                 "path": "email_hash"
+              },
+              {
+                "kind": "arg",
+                "path": "salt"
               }
             ]
           }
@@ -68,6 +72,10 @@
               32
             ]
           }
+        },
+        {
+          "name": "salt",
+          "type": "string"
         },
         {
           "name": "groth16_proof",
@@ -122,6 +130,10 @@
               {
                 "kind": "arg",
                 "path": "email_hash"
+              },
+              {
+                "kind": "arg",
+                "path": "salt"
               }
             ]
           }
@@ -140,6 +152,10 @@
               32
             ]
           }
+        },
+        {
+          "name": "salt",
+          "type": "string"
         },
         {
           "name": "groth16_proof",
@@ -236,6 +252,16 @@
     },
     {
       "code": 6002,
+      "name": "SaltMismatch",
+      "msg": "Salt mismatch"
+    },
+    {
+      "code": 6003,
+      "name": "SaltTooLong",
+      "msg": "Salt too long (max 32 characters)"
+    },
+    {
+      "code": 6004,
       "name": "InsufficientBalance",
       "msg": "Insufficient balance"
     }
@@ -282,6 +308,10 @@
                 32
               ]
             }
+          },
+          {
+            "name": "salt",
+            "type": "string"
           }
         ]
       }
@@ -299,6 +329,10 @@
                 32
               ]
             }
+          },
+          {
+            "name": "salt",
+            "type": "string"
           },
           {
             "name": "bump",
@@ -324,6 +358,10 @@
                 32
               ]
             }
+          },
+          {
+            "name": "salt",
+            "type": "string"
           }
         ]
       }
