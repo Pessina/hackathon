@@ -34,8 +34,8 @@ interface TransferData {
 interface ZKProofData {
   email: string;
   groth16Proof: {
-    proof: Uint8Array;
-    sp1PublicInputs: Uint8Array;
+    proof: Buffer;
+    sp1PublicInputs: Buffer;
   };
 }
 
@@ -96,42 +96,49 @@ const TransferForm = ({ className }: TransferFormProps) => {
         throw new Error(`No key found for kid: ${kid}`);
       }
 
-      console.log("key", key);
+      // Proving is working, do not remove this code
+      // // Get ZK proof from server
+      // const response = await fetch(
+      //   `${NEXT_PUBLIC_JWT_ZK_PROOF_SERVER_URL}/generate-proof`,
+      //   {
+      //     method: "POST",
+      //     headers: {
+      //       "Content-Type": "application/json",
+      //     },
+      //     body: JSON.stringify({
+      //       jwt_token: token,
+      //       public_key: {
+      //         n: key.n,
+      //         e: key.e,
+      //       },
+      //     }),
+      //   }
+      // );
 
-      // Get ZK proof from server
-      const response = await fetch(
-        `${NEXT_PUBLIC_JWT_ZK_PROOF_SERVER_URL}/generate-proof`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            jwt_token: token,
-            public_key: {
-              n: key.n,
-              e: key.e,
-            },
-          }),
-        }
-      );
+      // if (!response.ok) {
+      //   throw new Error(`Failed to get ZK proof: ${response.statusText}`);
+      // }
 
-      if (!response.ok) {
-        throw new Error(`Failed to get ZK proof: ${response.statusText}`);
-      }
+      // const proofResult = await response.json();
 
-      const proofResult = await response.json();
+      const proofResult = {
+        proof:
+          "a4594c590a66ef12edb001c8882f9bd7864a08a7632c47ab307653856802a6b91fc8278b0874f2f63b75d549aee19b97795e9014487d476113090d43c10d620d5d1c382706db7309889e6147003d59e2ac4ba757fb39c83d7939ca295d6afbefa521ac8501c6b4c236fe3f741cb4191673db2385b7262df37345110f011d90be806920fb2c4e9532c327c83b52ff4ef2a7214152b4f5334e3b664b222bcf21929b29f2a21542e7396b4166f16f835aadaf4841909def08cca74350604dbaf1d607eb8ddb071b79975c87e4891023b5efb43b1bc02e26f196855410f13ccb6eb30f88fdfa0daeb310570cb4b0835f23cdf82d1de7022d54441aa9b4379ebd6a2d882aa397",
+        verification_key:
+          "0x00390c74c859c201b98ba24a54e76c683b6a25625767e42529b156f19cfc4eae",
+        public_outputs_bytes:
+          "b9c53ddad62c54e2b8e437460ac30709d700d1eb6b0d1b58e2344a6c64cef0c4a4a787d8be7a56f1a18eb2726ac123c5a56ed3d4676e970915b717b1ff81204c000000000000000001",
+        proof_size: 260,
+      };
 
       console.log("proofResult", proofResult);
 
       // Convert hex strings to Uint8Array
-      const proof = new Uint8Array(
-        Buffer.from(proofResult.groth16Proof.proof, "hex")
+      const proof = Buffer.from(proofResult.proof, "hex");
+      const sp1PublicInputs = Buffer.from(
+        proofResult.public_outputs_bytes,
+        "hex"
       );
-      const sp1PublicInputs = new Uint8Array(
-        Buffer.from(proofResult.groth16Proof.sp1PublicInputs, "hex")
-      );
-
       setZkProofData({
         email,
         groth16Proof: {

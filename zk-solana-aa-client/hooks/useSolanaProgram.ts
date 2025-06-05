@@ -12,8 +12,8 @@ import idl from "../lib/zk_solana_aa.json";
 import { createHash } from "crypto";
 
 interface SP1Groth16Proof {
-  proof: Uint8Array;
-  sp1PublicInputs: Uint8Array;
+  proof: Buffer;
+  sp1PublicInputs: Buffer;
 }
 
 interface TransferParams {
