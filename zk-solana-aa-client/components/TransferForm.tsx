@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/card";
 import GoogleButton from "@/components/GoogleButton";
 import { toast } from "sonner";
-import { Send, Shield } from "lucide-react";
+import { Send, Shield, Copy, Check } from "lucide-react";
 import { useEnv } from "@/hooks/useEnv";
 import { useSolanaProgram } from "@/hooks/useSolanaProgram";
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -48,6 +48,7 @@ const TransferForm = ({ className }: TransferFormProps) => {
     transferFromUserAccount,
     getUserAccountBalance,
     checkUserAccountExists,
+    getUserAccountAddress,
   } = useSolanaProgram();
 
   const [isLoading, setIsLoading] = useState(false);
@@ -55,6 +56,7 @@ const TransferForm = ({ className }: TransferFormProps) => {
   const [zkProofData, setZkProofData] = useState<ZKProofData | null>(null);
   const [userAccountExists, setUserAccountExists] = useState(false);
   const [userAccountBalance, setUserAccountBalance] = useState<number>(0);
+  const [copiedAddress, setCopiedAddress] = useState(false);
 
   const {
     register,
@@ -71,6 +73,39 @@ const TransferForm = ({ className }: TransferFormProps) => {
   });
 
   const watchedAmount = watch("amount");
+
+  // Copy PDA address function
+  const copyPDAAddress = async () => {
+    if (!zkProofData) return;
+
+    const [pdaAddress] = getUserAccountAddress(zkProofData.email);
+    await navigator.clipboard.writeText(pdaAddress.toString());
+    setCopiedAddress(true);
+    toast.success("PDA address copied to clipboard!");
+    setTimeout(() => setCopiedAddress(false), 2000);
+  };
+
+  // Real-time balance polling
+  useEffect(() => {
+    if (!zkProofData || !userAccountExists || !isReady) return;
+
+    const pollBalance = async () => {
+      try {
+        const balance = await getUserAccountBalance(zkProofData.email);
+        setUserAccountBalance(balance);
+      } catch (error) {
+        console.error("Failed to fetch balance:", error);
+      }
+    };
+
+    // Poll immediately
+    pollBalance();
+
+    // Then poll every 5 seconds
+    const interval = setInterval(pollBalance, 5000);
+
+    return () => clearInterval(interval);
+  }, [zkProofData, userAccountExists, isReady, getUserAccountBalance]);
 
   const handleGoogleSuccess = async (token: string) => {
     const { email, kid } = parseOIDCToken(token);
@@ -225,10 +260,8 @@ const TransferForm = ({ className }: TransferFormProps) => {
 
       toast.success(`Transfer successful! Transaction: ${result.signature}`);
 
-      // Reset form and update balance
+      // Reset form (balance will be updated automatically by polling)
       reset();
-      const newBalance = await getUserAccountBalance(zkProofData.email);
-      setUserAccountBalance(newBalance);
     } catch (error) {
       console.error("Transfer error:", error);
       toast.error(
@@ -303,7 +336,7 @@ const TransferForm = ({ className }: TransferFormProps) => {
             {/* Account Status */}
             {zkProofData && (
               <div className="p-3 bg-blue-50 dark:bg-blue-950 rounded-lg border border-blue-200 dark:border-blue-800">
-                <div className="text-xs space-y-1">
+                <div className="text-xs space-y-2">
                   <div className="font-medium text-blue-800 dark:text-blue-200">
                     Email: {zkProofData.email}
                   </div>
@@ -320,9 +353,38 @@ const TransferForm = ({ className }: TransferFormProps) => {
                     </span>
                   </div>
                   {userAccountExists && (
-                    <div className="text-blue-700 dark:text-blue-300">
-                      Balance: {userAccountBalance.toFixed(4)} SOL
-                    </div>
+                    <>
+                      <div className="text-blue-700 dark:text-blue-300">
+                        Balance: {userAccountBalance.toFixed(4)} SOL
+                        <span className="text-xs text-green-600 ml-1">
+                          ● Live
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-blue-700 dark:text-blue-300 font-medium">
+                          PDA Address:
+                        </div>
+                        <div className="flex items-center space-x-2 p-2 bg-white dark:bg-gray-800 rounded border">
+                          <code className="text-xs font-mono text-gray-800 dark:text-gray-200 flex-1 break-all">
+                            {getUserAccountAddress(
+                              zkProofData.email
+                            )[0].toString()}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={copyPDAAddress}
+                            className="h-6 w-6 p-0 flex-shrink-0"
+                          >
+                            {copiedAddress ? (
+                              <Check className="h-3 w-3 text-green-600" />
+                            ) : (
+                              <Copy className="h-3 w-3" />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
