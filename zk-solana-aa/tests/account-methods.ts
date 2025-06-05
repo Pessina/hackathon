@@ -1,25 +1,22 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { ZkSolanaAa } from "../target/types/zk_solana_aa";
-import { ComputeBudgetProgram, Keypair, Transaction } from "@solana/web3.js";
 import {
-  createMint,
-  mintTo,
-  getAccount,
-  getAssociatedTokenAddress,
-  createAssociatedTokenAccountInstruction,
-} from "@solana/spl-token";
+  ComputeBudgetProgram,
+  Keypair,
+  Transaction,
+  LAMPORTS_PER_SOL,
+} from "@solana/web3.js";
 import * as assert from "assert";
 
-describe("Account Methods", () => {
+describe("Account Methods - Native SOL", () => {
   anchor.setProvider(anchor.AnchorProvider.env());
 
   const program = anchor.workspace.zkSolanaAa as Program<ZkSolanaAa>;
   const provider = anchor.getProvider();
 
-  const MINT_DECIMALS = 9;
-  const INITIAL_MINT_AMOUNT = 1_000_000_000_000;
-  const TRANSFER_AMOUNT = 500_000_000_000;
+  const INITIAL_SOL_AMOUNT = 1 * LAMPORTS_PER_SOL; // 1 SOL
+  const TRANSFER_AMOUNT = 0.5 * LAMPORTS_PER_SOL; // 0.5 SOL
   const COMPUTE_UNITS = 500_000;
 
   const PROOF_HEX =
@@ -37,13 +34,10 @@ describe("Account Methods", () => {
     sp1PublicInputs: Buffer.from(PUBLIC_VALUES_HEX, "hex"),
   };
 
-  let mint: anchor.web3.PublicKey;
   let userAccount: anchor.web3.PublicKey;
-  let sourceTokenAccount: anchor.web3.PublicKey;
-  let destinationTokenAccount: anchor.web3.PublicKey;
   let payer: Keypair;
   let authority: Keypair;
-  let destinationOwner: Keypair;
+  let destination: Keypair;
 
   const createComputeBudgetInstruction = () =>
     ComputeBudgetProgram.setComputeUnitLimit({ units: COMPUTE_UNITS });
@@ -63,22 +57,14 @@ describe("Account Methods", () => {
     await Promise.all(confirmPromises);
   };
 
-  beforeEach(async () => {
+  before(async () => {
     payer = Keypair.generate();
     authority = Keypair.generate();
-    destinationOwner = Keypair.generate();
+    destination = Keypair.generate();
 
     await airdropToAccounts(
-      [payer.publicKey, authority.publicKey, destinationOwner.publicKey],
-      2 * anchor.web3.LAMPORTS_PER_SOL
-    );
-
-    mint = await createMint(
-      provider.connection,
-      payer,
-      payer.publicKey,
-      null,
-      MINT_DECIMALS
+      [payer.publicKey, authority.publicKey],
+      2 * LAMPORTS_PER_SOL
     );
 
     const [userAccountPda] = anchor.web3.PublicKey.findProgramAddressSync(
@@ -87,28 +73,8 @@ describe("Account Methods", () => {
     );
     userAccount = userAccountPda;
 
-    destinationTokenAccount = await getAssociatedTokenAddress(
-      mint,
-      destinationOwner.publicKey,
-      false
-    );
-
-    const createDestATAInstruction = createAssociatedTokenAccountInstruction(
-      payer.publicKey,
-      destinationTokenAccount,
-      destinationOwner.publicKey,
-      mint
-    );
-
-    const destATATx = new Transaction().add(createDestATAInstruction);
-    const destSignature = await provider.connection.sendTransaction(destATATx, [
-      payer,
-    ]);
-    await provider.connection.confirmTransaction(destSignature);
-  });
-
-  it("Creates user account with auth", async () => {
-    const tx = await program.methods
+    // Create the user account once for all tests
+    await program.methods
       .createUserAccountWithAuth(Array.from(EMAIL_HASH), groth16Proof)
       .accounts({
         payer: payer.publicKey,
@@ -117,6 +83,10 @@ describe("Account Methods", () => {
       .signers([payer])
       .rpc();
 
+    console.log("User account created successfully:", userAccount.toString());
+  });
+
+  it("Verifies user account was created", async () => {
     const userAccountData = await program.account.userAccount.fetch(
       userAccount
     );
@@ -124,50 +94,62 @@ describe("Account Methods", () => {
     assert.ok(typeof userAccountData.bump === "number");
   });
 
-  it("Transfers tokens from user account with auth", async () => {
-    sourceTokenAccount = await getAssociatedTokenAddress(
-      mint,
-      userAccount,
-      true
+  it("Funds user account and transfers SOL with auth", async () => {
+    // Fund the user account by direct transfer (simulating external funding)
+    const fundTx = new Transaction().add(
+      anchor.web3.SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey: userAccount,
+        lamports: INITIAL_SOL_AMOUNT,
+      })
+    );
+    const fundSig = await provider.connection.sendTransaction(fundTx, [payer]);
+    await provider.connection.confirmTransaction(fundSig);
+
+    // Check initial balance
+    const initialBalance = await provider.connection.getBalance(userAccount);
+    const destinationInitialBalance = await provider.connection.getBalance(
+      destination.publicKey
     );
 
-    const createATAInstruction = createAssociatedTokenAccountInstruction(
-      payer.publicKey,
-      sourceTokenAccount,
-      userAccount,
-      mint
+    console.log(
+      "Initial user account balance:",
+      initialBalance / LAMPORTS_PER_SOL,
+      "SOL"
+    );
+    console.log(
+      "Initial destination balance:",
+      destinationInitialBalance / LAMPORTS_PER_SOL,
+      "SOL"
     );
 
-    const createATATx = new Transaction().add(createATAInstruction);
-    const signature = await provider.connection.sendTransaction(createATATx, [
-      payer,
-    ]);
-    await provider.connection.confirmTransaction(signature);
+    // Calculate rent-exempt minimum for user account
+    const rentExemptMinimum =
+      await provider.connection.getMinimumBalanceForRentExemption(
+        8 + 32 + 1 // UserAccount::SPACE (discriminator + email_hash + bump)
+      );
+    const availableBalance = initialBalance - rentExemptMinimum;
 
-    await mintTo(
-      provider.connection,
-      payer,
-      mint,
-      sourceTokenAccount,
-      payer.publicKey,
-      INITIAL_MINT_AMOUNT
+    console.log(
+      "Rent exempt minimum:",
+      rentExemptMinimum / LAMPORTS_PER_SOL,
+      "SOL"
+    );
+    console.log(
+      "Available balance for transfer:",
+      availableBalance / LAMPORTS_PER_SOL,
+      "SOL"
     );
 
-    const sourceAccountBefore = await getAccount(
-      provider.connection,
-      sourceTokenAccount
-    );
-    const destinationAccountBefore = await getAccount(
-      provider.connection,
-      destinationTokenAccount
-    );
-
-    assert.equal(
-      sourceAccountBefore.owner.toString(),
-      userAccount.toString(),
-      "Source token account must be owned by the PDA"
+    // Ensure we have enough balance for the transfer
+    assert.ok(
+      availableBalance >= TRANSFER_AMOUNT,
+      `Insufficient available balance for transfer. Have: ${
+        availableBalance / LAMPORTS_PER_SOL
+      } SOL, Need: ${TRANSFER_AMOUNT / LAMPORTS_PER_SOL} SOL`
     );
 
+    // Transfer SOL from user account to destination using the program method
     const tx = await program.methods
       .transferFromUserAccountWithAuth(
         Array.from(EMAIL_HASH),
@@ -176,46 +158,62 @@ describe("Account Methods", () => {
       )
       .accounts({
         authority: authority.publicKey,
-        sourceTokenAccount: sourceTokenAccount,
-        destinationTokenAccount: destinationTokenAccount,
-        mint: mint,
+        destination: destination.publicKey,
       })
       .preInstructions([createComputeBudgetInstruction()])
       .signers([authority])
       .rpc();
 
-    const sourceAccountAfter = await getAccount(
-      provider.connection,
-      sourceTokenAccount
-    );
-    const destinationAccountAfter = await getAccount(
-      provider.connection,
-      destinationTokenAccount
+    console.log("Transfer transaction signature:", tx);
+
+    // Check final balances
+    const finalBalance = await provider.connection.getBalance(userAccount);
+    const destinationFinalBalance = await provider.connection.getBalance(
+      destination.publicKey
     );
 
+    console.log(
+      "Final user account balance:",
+      finalBalance / LAMPORTS_PER_SOL,
+      "SOL"
+    );
+    console.log(
+      "Final destination balance:",
+      destinationFinalBalance / LAMPORTS_PER_SOL,
+      "SOL"
+    );
+
+    // Verify the transfer
+    const expectedFinalBalance = initialBalance - TRANSFER_AMOUNT;
+    const expectedDestinationBalance =
+      destinationInitialBalance + TRANSFER_AMOUNT;
+
     assert.equal(
-      sourceAccountAfter.amount.toString(),
-      (INITIAL_MINT_AMOUNT - TRANSFER_AMOUNT).toString(),
-      "PDA-owned source account should have reduced balance"
+      finalBalance,
+      expectedFinalBalance,
+      "User account should have reduced balance after transfer"
     );
     assert.equal(
-      destinationAccountAfter.amount.toString(),
-      TRANSFER_AMOUNT.toString(),
-      "Destination account should have received the transferred tokens"
+      destinationFinalBalance,
+      expectedDestinationBalance,
+      "Destination should have received the transferred SOL"
     );
   });
 
   it("Fails to create user account with wrong email hash", async () => {
     const wrongEmailHash = new Uint8Array(32).fill(1);
+    const wrongPayer = Keypair.generate();
+
+    await airdropToAccounts([wrongPayer.publicKey], 2 * LAMPORTS_PER_SOL);
 
     try {
       await program.methods
         .createUserAccountWithAuth(Array.from(wrongEmailHash), groth16Proof)
         .accounts({
-          payer: payer.publicKey,
+          payer: wrongPayer.publicKey,
         })
         .preInstructions([createComputeBudgetInstruction()])
-        .signers([payer])
+        .signers([wrongPayer])
         .rpc();
 
       assert.fail("Expected transaction to fail with email hash mismatch");
@@ -228,20 +226,16 @@ describe("Account Methods", () => {
   it("Fails to transfer with wrong email hash", async () => {
     const wrongEmailHash = new Uint8Array(32).fill(2);
 
-    const transferAmount = 100_000_000_000;
-
     try {
       await program.methods
         .transferFromUserAccountWithAuth(
           Array.from(wrongEmailHash),
           groth16Proof,
-          new anchor.BN(transferAmount)
+          new anchor.BN(TRANSFER_AMOUNT)
         )
         .accounts({
           authority: authority.publicKey,
-          sourceTokenAccount: sourceTokenAccount,
-          destinationTokenAccount: destinationTokenAccount,
-          mint: mint,
+          destination: destination.publicKey,
         })
         .preInstructions([createComputeBudgetInstruction()])
         .signers([authority])
@@ -250,7 +244,6 @@ describe("Account Methods", () => {
       assert.fail("Expected transaction to fail with email hash mismatch");
     } catch (error: any) {
       console.log("Expected error:", error.message);
-
       assert.ok(
         error.message.includes("EmailHashMismatch") ||
           error.message.includes("AccountNotInitialized")
@@ -258,67 +251,57 @@ describe("Account Methods", () => {
     }
   });
 
-  it("Fails to transfer from token account NOT owned by PDA", async () => {
-    const regularOwner = Keypair.generate();
-
-    const nonPdaTokenAccount = await getAssociatedTokenAddress(
-      mint,
-      regularOwner.publicKey,
-      false
-    );
-
-    const createNonPdaATAInstruction = createAssociatedTokenAccountInstruction(
-      payer.publicKey,
-      nonPdaTokenAccount,
-      regularOwner.publicKey,
-      mint
-    );
-
-    const nonPdaATATx = new Transaction().add(createNonPdaATAInstruction);
-    const nonPdaSignature = await provider.connection.sendTransaction(
-      nonPdaATATx,
-      [payer]
-    );
-    await provider.connection.confirmTransaction(nonPdaSignature);
-
-    await mintTo(
-      provider.connection,
-      payer,
-      mint,
-      nonPdaTokenAccount,
-      payer.publicKey,
-      TRANSFER_AMOUNT
-    );
-
-    const transferAmount = 100_000_000_000;
+  it("Fails to transfer with insufficient balance", async () => {
+    // Don't fund the account additional - it should only have rent-exempt minimum plus any previous balance
+    const largeTransferAmount = 10 * LAMPORTS_PER_SOL; // Much more than available
 
     try {
       await program.methods
         .transferFromUserAccountWithAuth(
           Array.from(EMAIL_HASH),
           groth16Proof,
-          new anchor.BN(transferAmount)
+          new anchor.BN(largeTransferAmount)
         )
         .accounts({
           authority: authority.publicKey,
-          sourceTokenAccount: nonPdaTokenAccount,
-          destinationTokenAccount: destinationTokenAccount,
-          mint: mint,
+          destination: destination.publicKey,
         })
         .preInstructions([createComputeBudgetInstruction()])
         .signers([authority])
         .rpc();
 
+      assert.fail("Expected transaction to fail with insufficient balance");
+    } catch (error: any) {
+      console.log("Expected error for insufficient balance:", error.message);
+      assert.ok(error.message.includes("InsufficientBalance"));
+    }
+  });
+
+  it("Fails to create user account again (duplicate)", async () => {
+    const duplicatePayer = Keypair.generate();
+
+    await airdropToAccounts([duplicatePayer.publicKey], 2 * LAMPORTS_PER_SOL);
+
+    try {
+      await program.methods
+        .createUserAccountWithAuth(Array.from(EMAIL_HASH), groth16Proof)
+        .accounts({
+          payer: duplicatePayer.publicKey,
+        })
+        .preInstructions([createComputeBudgetInstruction()])
+        .signers([duplicatePayer])
+        .rpc();
+
       assert.fail(
-        "Expected transaction to fail because token account is not owned by PDA"
+        "Expected transaction to fail when creating duplicate account"
       );
     } catch (error: any) {
-      console.log("Expected error for non-PDA token account:", error.message);
-
+      console.log("Expected error for duplicate account:", error.message);
+      // The error could be "already in use" or similar account initialization error
       assert.ok(
-        error.message.includes("ConstraintTokenOwner") ||
-          error.message.includes("InvalidAccountData") ||
-          error.message.includes("token::authority")
+        error.message.includes("already in use") ||
+          error.message.includes("AccountAlreadyInitialized") ||
+          error.message.includes("custom program error: 0x0")
       );
     }
   });

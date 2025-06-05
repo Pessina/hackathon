@@ -1,5 +1,4 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
 use crate::contract::auth::{verify_jwt_proof, SP1Groth16Proof};
 
@@ -35,21 +34,9 @@ pub struct TransferFromUserAccountWithAuth<'info> {
     )]
     pub user_account: Account<'info, UserAccount>,
 
-    #[account(
-        mut,
-        token::authority = user_account,
-        token::mint = mint,
-    )]
-    pub source_token_account: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        token::mint = mint,
-    )]
-    pub destination_token_account: Account<'info, TokenAccount>,
-
-    pub mint: Account<'info, Mint>,
-    pub token_program: Program<'info, Token>,
+    /// CHECK: This account receives the SOL transfer
+    #[account(mut)]
+    pub destination: AccountInfo<'info>,
 }
 
 pub fn create_user_account_with_auth(
@@ -94,26 +81,33 @@ pub fn transfer_from_user_account_with_auth(
 
     let user_account = &ctx.accounts.user_account;
 
-    let seeds = &[UserAccount::SEED_PREFIX, &email_hash, &[user_account.bump]];
-    let signer_seeds = &[&seeds[..]];
+    // Check that the user account has sufficient balance
+    let user_account_lamports = user_account.to_account_info().lamports();
+    let rent_exempt_minimum = Rent::get()?.minimum_balance(UserAccount::SPACE);
+    let available_balance = user_account_lamports
+        .checked_sub(rent_exempt_minimum)
+        .ok_or(ErrorCode::InsufficientBalance)?;
 
-    token::transfer(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            Transfer {
-                from: ctx.accounts.source_token_account.to_account_info(),
-                to: ctx.accounts.destination_token_account.to_account_info(),
-                authority: ctx.accounts.user_account.to_account_info(),
-            },
-            signer_seeds,
-        ),
-        amount,
-    )?;
+    require!(available_balance >= amount, ErrorCode::InsufficientBalance);
 
-    emit!(TokensTransferred {
+    // Transfer SOL by manually adjusting lamports
+    // Since the user_account is a PDA with data, we cannot use system_program::transfer
+    // Instead, we directly modify the lamports in both accounts
+    **ctx
+        .accounts
+        .user_account
+        .to_account_info()
+        .try_borrow_mut_lamports()? -= amount;
+    **ctx
+        .accounts
+        .destination
+        .to_account_info()
+        .try_borrow_mut_lamports()? += amount;
+
+    emit!(SolTransferred {
         user_account: user_account.key(),
         amount,
-        destination: ctx.accounts.destination_token_account.key(),
+        destination: ctx.accounts.destination.key(),
         email_hash,
     });
 
@@ -145,7 +139,7 @@ pub struct UserAccountCreated {
 }
 
 #[event]
-pub struct TokensTransferred {
+pub struct SolTransferred {
     pub user_account: Pubkey,
     pub amount: u64,
     pub destination: Pubkey,
@@ -158,4 +152,6 @@ pub enum ErrorCode {
     ProofVerificationFailed,
     #[msg("Email hash mismatch")]
     EmailHashMismatch,
+    #[msg("Insufficient balance")]
+    InsufficientBalance,
 }

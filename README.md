@@ -1,2 +1,3 @@
 - Poseidon hash is more friendly than sha256 for zk proofs
 - The OIDC nonce should include the method and args when calling the AA, currently if the proof is stolen anybody can authorize anything on the account
+- If a PDA has data (e.g email_hash and bump) we can't use system_program::transfer, so we need to do a manual transfer. Ideally we should create a pda for the pda and hold the tokens there on a account without data
