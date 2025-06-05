@@ -143,7 +143,7 @@ const TransferForm = ({ className }: TransferFormProps) => {
         email,
         groth16Proof: {
           proof,
-          sp1PublicInputs,
+          sp1PublicInputs: sp1PublicInputs,
         },
       });
 

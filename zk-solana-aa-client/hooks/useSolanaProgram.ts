@@ -6,6 +6,7 @@ import {
   Transaction,
   LAMPORTS_PER_SOL,
   VersionedTransaction,
+  ComputeBudgetProgram,
 } from "@solana/web3.js";
 import { useEnv } from "./useEnv";
 import idl from "../lib/zk_solana_aa.json";
@@ -92,12 +93,17 @@ export const useSolanaProgram = () => {
 
       const emailHash = hashEmail(email);
       const payerKey = payer || publicKey;
+      const [userAccountAddress] = getUserAccountAddress(email);
 
       const tx = await program.methods
         .createUserAccountWithAuth(Array.from(emailHash), groth16Proof)
         .accounts({
           payer: payerKey,
+          userAccount: userAccountAddress,
         })
+        .preInstructions([
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
+        ])
         .transaction();
 
       const signature = await sendTransaction(tx, connection);
@@ -132,6 +138,7 @@ export const useSolanaProgram = () => {
       const emailHash = hashEmail(email);
       const destination = new PublicKey(destinationAddress);
       const amountInLamports = new BN(amount * LAMPORTS_PER_SOL);
+      const [userAccountAddress] = getUserAccountAddress(email);
 
       const tx = await program.methods
         .transferFromUserAccountWithAuth(
@@ -141,8 +148,12 @@ export const useSolanaProgram = () => {
         )
         .accounts({
           authority: publicKey,
+          userAccount: userAccountAddress,
           destination,
         })
+        .preInstructions([
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
+        ])
         .transaction();
 
       const signature = await sendTransaction(tx, connection);
