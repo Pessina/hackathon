@@ -11,3 +11,5 @@ sha2 = { version =  "0.10.8", package = "sha2", features = ["oid"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 base64 = "0.22.1"
+p3-baby-bear = "0.2.3-succinct"
+p3-field = "0.2.3-succinct"

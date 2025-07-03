@@ -25,4 +25,6 @@ sp1-primitives = "5.0.0"
 anchor-spl = "0.31.0"
 sha2 = "0.10.8"
 serde = { version = "1.0.219", features = ["derive"] }
+p3-baby-bear = "0.2.3-succinct"
+p3-field = "0.2.3-succinct"
 

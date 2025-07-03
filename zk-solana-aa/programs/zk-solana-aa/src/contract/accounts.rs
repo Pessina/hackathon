@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::contract::auth::{verify_jwt_proof, SP1Groth16Proof};
+use crate::contract::auth::{verify_jwt_proof, poseidon_to_bytes, SP1Groth16Proof};
 
 #[derive(Accounts)]
 #[instruction(email_hash: [u8; 32], salt: String)]
@@ -47,7 +47,7 @@ pub fn create_user_account_with_auth(
     groth16_proof: SP1Groth16Proof,
 ) -> Result<()> {
     let public_outputs = verify_jwt_proof(groth16_proof)?;
-    let verified_email_hash = public_outputs.email_hash;
+    let verified_email_hash = poseidon_to_bytes(&public_outputs.email_hash);
 
     require!(
         verified_email_hash == email_hash,
@@ -80,24 +80,25 @@ pub fn transfer_from_user_account_with_auth(
     amount: u64,
 ) -> Result<()> {
     let public_outputs = verify_jwt_proof(groth16_proof)?;
-    let verified_email_hash = public_outputs.email_hash;
+    let verified_email_hash = poseidon_to_bytes(&public_outputs.email_hash);
 
     require!(
         verified_email_hash == email_hash,
         ErrorCode::EmailHashMismatch
     );
-
-    let user_account = &ctx.accounts.user_account;
-
+    
     // Check that the user account has sufficient balance
-    let user_account_lamports = user_account.to_account_info().lamports();
+    let user_account_lamports = ctx.accounts.user_account.to_account_info().lamports();
     let rent_exempt_minimum = Rent::get()?.minimum_balance(UserAccount::SPACE);
     let available_balance = user_account_lamports
         .checked_sub(rent_exempt_minimum)
         .ok_or(ErrorCode::InsufficientBalance)?;
 
     require!(available_balance >= amount, ErrorCode::InsufficientBalance);
-
+    
+    // Get the user account key before borrowing mutably
+    let user_account_key = ctx.accounts.user_account.key();
+    
     // Transfer SOL by manually adjusting lamports
     // Since the user_account is a PDA with data, we cannot use system_program::transfer
     // Instead, we directly modify the lamports in both accounts
@@ -113,7 +114,7 @@ pub fn transfer_from_user_account_with_auth(
         .try_borrow_mut_lamports()? += amount;
 
     emit!(SolTransferred {
-        user_account: user_account.key(),
+        user_account: user_account_key,
         amount,
         destination: ctx.accounts.destination.key(),
         email_hash,

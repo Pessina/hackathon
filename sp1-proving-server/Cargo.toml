@@ -1,0 +1,16 @@
+[package]
+name = "sp1-proving-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4.4"
+actix-cors = "0.6"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.21"
+sp1-sdk = "5.0.0"
+sp1-core = "5.0.0"
+anyhow = "1.0"
+hex = "0.4"

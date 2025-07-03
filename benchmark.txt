@@ -1,0 +1,7 @@
+2025-06-08T15:02:50.610057Z  INFO Received proof generation request
+2025-06-08T15:07:25.652443Z  INFO Proof generated successfully, size: 260 bytes
+= 4.6 minutes
+
+2025-06-08T15:08:41.987706Z  INFO Received proof generation request
+2025-06-08T15:13:08.583032Z  INFO Proof generated successfully, size: 260 bytes
+= 4.6 minutes

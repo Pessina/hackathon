@@ -10,15 +10,100 @@ import {
 } from "@solana/web3.js";
 import { useEnv } from "./useEnv";
 import idl from "../lib/zk_solana_aa.json";
-import { createHash } from "crypto";
 
 interface SP1Groth16Proof {
   proof: Buffer;
   sp1PublicInputs: Buffer;
 }
 
+// Match the optimized PublicOutputs structure from the ZK program
+interface PublicOutputs {
+  email_hash: number[];    // PoseidonHash as array of 8 BabyBear field elements (only private field)
+  sub: string;             // Subject (public field, exposed directly)
+  iss: string;             // Issuer (public field, exposed directly)  
+  aud: string;             // Audience (public field, exposed directly)
+  verified: boolean;
+}
+
+// Helper function to convert Poseidon hash to bytes (matching Solana program)
+function poseidonToBytes(hash: number[]): Uint8Array {
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < Math.min(hash.length, 8); i++) {
+    // Convert each field element to little-endian bytes
+    const elemBytes = new ArrayBuffer(4);
+    const view = new DataView(elemBytes);
+    view.setUint32(0, hash[i], true); // little-endian
+    
+    const start = i * 4;
+    const end = Math.min(start + 4, 32);
+    const copyLen = end - start;
+    bytes.set(new Uint8Array(elemBytes, 0, copyLen), start);
+  }
+  return bytes;
+}
+
+// Parse public outputs from SP1 public inputs
+function parsePublicOutputs(publicInputs: Buffer): PublicOutputs {
+  // SP1 public inputs are serialized using bincode
+  // The structure is: email_hash (32 bytes), sub (string), iss (string), aud (string), verified (1 byte)
+  
+  try {
+    const view = new DataView(publicInputs.buffer, publicInputs.byteOffset, publicInputs.byteLength);
+    let offset = 0;
+    
+    // Read email_hash (32 bytes = 8 field elements * 4 bytes each)
+    const email_hash = [];
+    for (let i = 0; i < 8; i++) {
+      email_hash.push(view.getUint32(offset, true));
+      offset += 4;
+    }
+    
+    // For strings, we need to read the length first (4 bytes) then the content
+    // Read sub string
+    const subLength = view.getUint32(offset, true);
+    offset += 4;
+    const subBytes = new Uint8Array(publicInputs.slice(offset, offset + subLength));
+    const sub = new TextDecoder().decode(subBytes);
+    offset += subLength;
+    
+    // Read iss string
+    const issLength = view.getUint32(offset, true);
+    offset += 4;
+    const issBytes = new Uint8Array(publicInputs.slice(offset, offset + issLength));
+    const iss = new TextDecoder().decode(issBytes);
+    offset += issLength;
+    
+    // Read aud string
+    const audLength = view.getUint32(offset, true);
+    offset += 4;
+    const audBytes = new Uint8Array(publicInputs.slice(offset, offset + audLength));
+    const aud = new TextDecoder().decode(audBytes);
+    offset += audLength;
+    
+    // Read verified (1 byte)
+    const verified = view.getUint8(offset) !== 0;
+    
+    return {
+      email_hash,
+      sub,
+      iss,
+      aud,
+      verified
+    };
+  } catch (error) {
+    console.error("Error parsing public outputs:", error);
+    // Return default values if parsing fails
+    return {
+      email_hash: Array(8).fill(0),
+      sub: "",
+      iss: "",
+      aud: "",
+      verified: false
+    };
+  }
+}
+
 interface TransferParams {
-  email: string;
   salt: string;
   groth16Proof: SP1Groth16Proof;
   amount: number; // in SOL
@@ -26,7 +111,6 @@ interface TransferParams {
 }
 
 interface CreateAccountParams {
-  email: string;
   salt: string;
   groth16Proof: SP1Groth16Proof;
   payer?: PublicKey;
@@ -70,15 +154,9 @@ export const useSolanaProgram = () => {
     return new Program(idl as Idl, provider);
   }, [provider]);
 
-  const hashEmail = useCallback((email: string): Uint8Array => {
-    const hash = createHash("sha256");
-    hash.update(email);
-    return new Uint8Array(hash.digest());
-  }, []);
 
   const getUserAccountAddress = useCallback(
-    (email: string, salt: string): [PublicKey, number] => {
-      const emailHash = hashEmail(email);
+    (emailHash: Uint8Array, salt: string): [PublicKey, number] => {
       return PublicKey.findProgramAddressSync(
         [
           Buffer.from("user_account"),
@@ -88,18 +166,21 @@ export const useSolanaProgram = () => {
         programId
       );
     },
-    [programId, hashEmail]
+    [programId]
   );
 
   const createUserAccount = useCallback(
-    async ({ email, salt, groth16Proof, payer }: CreateAccountParams) => {
+    async ({ salt, groth16Proof, payer }: CreateAccountParams) => {
       if (!program || !publicKey || !sendTransaction) {
         throw new Error("Program not initialized or wallet not connected");
       }
 
-      const emailHash = hashEmail(email);
+      // Parse the email hash from the proof public outputs
+      const publicOutputs = parsePublicOutputs(groth16Proof.sp1PublicInputs);
+      const emailHash = poseidonToBytes(publicOutputs.email_hash);
+      
       const payerKey = payer || publicKey;
-      const [userAccountAddress] = getUserAccountAddress(email, salt);
+      const [userAccountAddress] = getUserAccountAddress(emailHash, salt);
 
       const tx = await program.methods
         .createUserAccountWithAuth(Array.from(emailHash), salt, groth16Proof)
@@ -117,7 +198,7 @@ export const useSolanaProgram = () => {
 
       return {
         signature,
-        userAccount: getUserAccountAddress(email, salt)[0],
+        userAccount: getUserAccountAddress(emailHash, salt)[0],
       };
     },
     [
@@ -126,13 +207,11 @@ export const useSolanaProgram = () => {
       sendTransaction,
       connection,
       getUserAccountAddress,
-      hashEmail,
     ]
   );
 
   const transferFromUserAccount = useCallback(
     async ({
-      email,
       salt,
       groth16Proof,
       amount,
@@ -142,10 +221,13 @@ export const useSolanaProgram = () => {
         throw new Error("Program not initialized or wallet not connected");
       }
 
-      const emailHash = hashEmail(email);
+      // Parse the email hash from the proof public outputs
+      const publicOutputs = parsePublicOutputs(groth16Proof.sp1PublicInputs);
+      const emailHash = poseidonToBytes(publicOutputs.email_hash);
+      
       const destination = new PublicKey(destinationAddress);
       const amountInLamports = new BN(amount * LAMPORTS_PER_SOL);
-      const [userAccountAddress] = getUserAccountAddress(email, salt);
+      const [userAccountAddress] = getUserAccountAddress(emailHash, salt);
 
       const tx = await program.methods
         .transferFromUserAccountWithAuth(
@@ -169,7 +251,7 @@ export const useSolanaProgram = () => {
 
       return {
         signature,
-        userAccount: getUserAccountAddress(email, salt)[0],
+        userAccount: getUserAccountAddress(emailHash, salt)[0],
       };
     },
     [
@@ -178,13 +260,12 @@ export const useSolanaProgram = () => {
       sendTransaction,
       connection,
       getUserAccountAddress,
-      hashEmail,
     ]
   );
 
   const getUserAccountBalance = useCallback(
-    async (email: string, salt: string): Promise<number> => {
-      const [userAccountAddress] = getUserAccountAddress(email, salt);
+    async (emailHash: Uint8Array, salt: string): Promise<number> => {
+      const [userAccountAddress] = getUserAccountAddress(emailHash, salt);
       const balance = await connection.getBalance(userAccountAddress);
 
       // Calculate rent-exempt minimum (updated for new account size with salt)
@@ -199,12 +280,21 @@ export const useSolanaProgram = () => {
     [connection, getUserAccountAddress]
   );
 
+  const getUserAccountBalanceFromProof = useCallback(
+    async (groth16Proof: SP1Groth16Proof, salt: string): Promise<number> => {
+      const publicOutputs = parsePublicOutputs(groth16Proof.sp1PublicInputs);
+      const emailHash = poseidonToBytes(publicOutputs.email_hash);
+      return getUserAccountBalance(emailHash, salt);
+    },
+    [getUserAccountBalance]
+  );
+
   const checkUserAccountExists = useCallback(
-    async (email: string, salt: string): Promise<boolean> => {
+    async (emailHash: Uint8Array, salt: string): Promise<boolean> => {
       if (!program) return false;
 
       try {
-        const [userAccountAddress] = getUserAccountAddress(email, salt);
+        const [userAccountAddress] = getUserAccountAddress(emailHash, salt);
         const accountInfo = await connection.getAccountInfo(userAccountAddress);
         return !!accountInfo;
       } catch {
@@ -214,12 +304,21 @@ export const useSolanaProgram = () => {
     [program, connection, getUserAccountAddress]
   );
 
+  const checkUserAccountExistsFromProof = useCallback(
+    async (groth16Proof: SP1Groth16Proof, salt: string): Promise<boolean> => {
+      const publicOutputs = parsePublicOutputs(groth16Proof.sp1PublicInputs);
+      const emailHash = poseidonToBytes(publicOutputs.email_hash);
+      return checkUserAccountExists(emailHash, salt);
+    },
+    [checkUserAccountExists]
+  );
+
   const getUserAccountData = useCallback(
-    async (email: string, salt: string) => {
+    async (emailHash: Uint8Array, salt: string) => {
       if (!program) return null;
 
       try {
-        const [userAccountAddress] = getUserAccountAddress(email, salt);
+        const [userAccountAddress] = getUserAccountAddress(emailHash, salt);
         return await (program.account as any).userAccount.fetch(
           userAccountAddress
         );
@@ -230,15 +329,37 @@ export const useSolanaProgram = () => {
     [program, getUserAccountAddress]
   );
 
+  const getUserAccountDataFromProof = useCallback(
+    async (groth16Proof: SP1Groth16Proof, salt: string) => {
+      const publicOutputs = parsePublicOutputs(groth16Proof.sp1PublicInputs);
+      const emailHash = poseidonToBytes(publicOutputs.email_hash);
+      return getUserAccountData(emailHash, salt);
+    },
+    [getUserAccountData]
+  );
+
+  const getUserAccountAddressFromProof = useCallback(
+    (groth16Proof: SP1Groth16Proof, salt: string): [PublicKey, number] => {
+      const publicOutputs = parsePublicOutputs(groth16Proof.sp1PublicInputs);
+      const emailHash = poseidonToBytes(publicOutputs.email_hash);
+      return getUserAccountAddress(emailHash, salt);
+    },
+    [getUserAccountAddress]
+  );
+
   return {
     program,
     programId,
     isReady: !!program && !!publicKey,
     getUserAccountAddress,
+    getUserAccountAddressFromProof,
     createUserAccount,
     transferFromUserAccount,
     getUserAccountBalance,
+    getUserAccountBalanceFromProof,
     checkUserAccountExists,
+    checkUserAccountExistsFromProof,
     getUserAccountData,
+    getUserAccountDataFromProof,
   };
 };

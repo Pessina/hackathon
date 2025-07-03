@@ -53,9 +53,9 @@ const TransferForm = ({ className }: TransferFormProps) => {
     isReady,
     createUserAccount,
     transferFromUserAccount,
-    getUserAccountBalance,
-    checkUserAccountExists,
-    getUserAccountAddress,
+    getUserAccountBalanceFromProof,
+    checkUserAccountExistsFromProof,
+    getUserAccountAddressFromProof,
   } = useSolanaProgram();
 
   const [isLoading, setIsLoading] = useState(false);
@@ -91,7 +91,7 @@ const TransferForm = ({ className }: TransferFormProps) => {
   const copyPDAAddress = async () => {
     if (!zkProofData || !selectedSalt) return;
 
-    const [pdaAddress] = getUserAccountAddress(zkProofData.email, selectedSalt);
+    const [pdaAddress] = getUserAccountAddressFromProof(zkProofData.groth16Proof, selectedSalt);
     await navigator.clipboard.writeText(pdaAddress.toString());
     setCopiedAddress(true);
     toast.success("PDA address copied to clipboard!");
@@ -112,12 +112,12 @@ const TransferForm = ({ className }: TransferFormProps) => {
 
     for (const salt of allSalts) {
       try {
-        const exists = await checkUserAccountExists(zkProofData.email, salt);
-        const [address] = getUserAccountAddress(zkProofData.email, salt);
+        const exists = await checkUserAccountExistsFromProof(zkProofData.groth16Proof, salt);
+        const [address] = getUserAccountAddressFromProof(zkProofData.groth16Proof, salt);
         let balance = 0;
 
         if (exists) {
-          balance = await getUserAccountBalance(zkProofData.email, salt);
+          balance = await getUserAccountBalanceFromProof(zkProofData.groth16Proof, salt);
         }
 
         accounts.push({
@@ -137,9 +137,9 @@ const TransferForm = ({ className }: TransferFormProps) => {
   }, [
     zkProofData,
     isReady,
-    checkUserAccountExists,
-    getUserAccountAddress,
-    getUserAccountBalance,
+    checkUserAccountExistsFromProof,
+    getUserAccountAddressFromProof,
+    getUserAccountBalanceFromProof,
     newSalt,
   ]);
 
@@ -157,8 +157,8 @@ const TransferForm = ({ className }: TransferFormProps) => {
           userAccounts.map(async (account) => {
             console.log(account);
             try {
-              const balance = await getUserAccountBalance(
-                zkProofData.email,
+              const balance = await getUserAccountBalanceFromProof(
+                zkProofData.groth16Proof,
                 account.salt
               );
               return { ...account, balance };
@@ -179,13 +179,14 @@ const TransferForm = ({ className }: TransferFormProps) => {
   }, [
     zkProofData,
     isReady,
-    getUserAccountBalance,
-    checkUserAccountExists,
+    getUserAccountBalanceFromProof,
+    checkUserAccountExistsFromProof,
     loadUserAccounts,
     userAccounts,
   ]);
 
   const handleGoogleSuccess = async (token: string) => {
+    console.log("handleGoogleSuccess", token);
     const { email, kid } = parseOIDCToken(token);
 
     try {
@@ -209,40 +210,34 @@ const TransferForm = ({ className }: TransferFormProps) => {
         throw new Error(`No key found for kid: ${kid}`);
       }
 
-      // Proving is working, do not remove this code
       // Get ZK proof from server
-      // const response = await fetch(
-      //   `${NEXT_PUBLIC_JWT_ZK_PROOF_SERVER_URL}/generate-proof`,
-      //   {
-      //     method: "POST",
-      //     headers: {
-      //       "Content-Type": "application/json",
-      //     },
-      //     body: JSON.stringify({
-      //       jwt_token: token,
-      //       public_key: {
-      //         n: key.n,
-      //         e: key.e,
-      //       },
-      //     }),
-      //   }
-      // );
+      const response = await fetch(
+        `${NEXT_PUBLIC_JWT_ZK_PROOF_SERVER_URL}/generate-proof`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            jwt_token: token,
+            public_key: {
+              n: key.n,
+              e: key.e,
+            },
+          }),
+        }
+      );
 
-      // if (!response.ok) {
-      //   throw new Error(`Failed to get ZK proof: ${response.statusText}`);
-      // }
+      if (!response.ok) {
+        throw new Error(`Failed to get ZK proof: ${response.statusText}`);
+      }
 
-      // const proofResult = await response.json();
-
-      const proofResult = {
-        proof:
-          "a4594c590a66ef12edb001c8882f9bd7864a08a7632c47ab307653856802a6b91fc8278b0874f2f63b75d549aee19b97795e9014487d476113090d43c10d620d5d1c382706db7309889e6147003d59e2ac4ba757fb39c83d7939ca295d6afbefa521ac8501c6b4c236fe3f741cb4191673db2385b7262df37345110f011d90be806920fb2c4e9532c327c83b52ff4ef2a7214152b4f5334e3b664b222bcf21929b29f2a21542e7396b4166f16f835aadaf4841909def08cca74350604dbaf1d607eb8ddb071b79975c87e4891023b5efb43b1bc02e26f196855410f13ccb6eb30f88fdfa0daeb310570cb4b0835f23cdf82d1de7022d54441aa9b4379ebd6a2d882aa397",
-        verification_key:
-          "0x00390c74c859c201b98ba24a54e76c683b6a25625767e42529b156f19cfc4eae",
-        public_outputs_bytes:
-          "b9c53ddad62c54e2b8e437460ac30709d700d1eb6b0d1b58e2344a6c64cef0c4a4a787d8be7a56f1a18eb2726ac123c5a56ed3d4676e970915b717b1ff81204c000000000000000001",
-        proof_size: 260,
-      };
+      // Generate proof using SP1 proving server
+      const proofResult = await response.json();
+      
+      if (!proofResult || !proofResult.proof) {
+        throw new Error("Failed to generate proof");
+      }
 
       console.log("proofResult", proofResult);
 
@@ -283,7 +278,6 @@ const TransferForm = ({ className }: TransferFormProps) => {
 
     try {
       const result = await createUserAccount({
-        email: zkProofData.email,
         salt,
         groth16Proof: zkProofData.groth16Proof,
       });
@@ -332,7 +326,6 @@ const TransferForm = ({ className }: TransferFormProps) => {
 
     try {
       const result = await transferFromUserAccount({
-        email: zkProofData.email,
         salt: selectedSalt,
         groth16Proof: zkProofData.groth16Proof,
         amount: data.amount,
