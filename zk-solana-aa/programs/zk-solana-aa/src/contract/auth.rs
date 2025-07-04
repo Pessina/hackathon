@@ -1,9 +1,9 @@
 use anchor_lang::prelude::*;
+use p3_baby_bear::BabyBear;
+use p3_field::PrimeField32;
 use serde::{Deserialize, Serialize};
 use sp1_primitives::io::SP1PublicValues;
 use sp1_solana::verify_proof;
-use p3_baby_bear::BabyBear;
-use p3_field::PrimeField32;
 
 use crate::constants;
 
@@ -19,10 +19,11 @@ pub struct SP1Groth16Proof {
 // The order matters, it should be the same as the order of the public inputs in the SP1 program
 #[derive(Serialize, Deserialize)]
 pub struct PublicOutputs {
-    pub email_hash: PoseidonHash,    // Email hash (private field that needs hashing)
-    pub sub: String,                 // Subject (public field, exposed directly)
-    pub iss: String,                 // Issuer (public field, exposed directly)
-    pub aud: String,                 // Audience (public field, exposed directly)
+    pub email_hash: PoseidonHash, // Email hash (private field that needs hashing)
+    pub pk_hash: PoseidonHash,    // Public key hash (to verify issuer)
+    pub sub: String,              // Subject (public field, exposed directly)
+    pub iss: String,              // Issuer (public field, exposed directly)
+    pub aud: String,              // Audience (public field, exposed directly)
     pub verified: bool,
 }
 
@@ -57,7 +58,7 @@ pub fn verify_jwt_proof(groth16_proof: SP1Groth16Proof) -> Result<PublicOutputs>
     let mut public_values = SP1PublicValues::from(&groth16_proof.sp1_public_inputs);
 
     let public_outputs: PublicOutputs = public_values.read();
-    
+
     // Only validate proof verification status
     if !public_outputs.verified {
         return Err(error!(ErrorCode::ProofVerificationFailed));
